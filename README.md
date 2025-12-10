@@ -25,11 +25,27 @@ A high-performance, browser-based face recognition system built with [face-api.j
 - **`index.html`**: Quick technical demo ensuring WASM backend and models are loaded correctly.
 - **`face_register.html`**: User registration interface. Captures face descriptors and saves them.
 - **`face_verify.html`**: Identity verification interface. Matches live video against registered profiles.
-- **`settings.html`**: Configuration and data management (if applicable).
+- **`face_verify_adhoc.html`**: Quick demo - upload reference photos and verify with webcam (no registration required).
+- **`face_verify_image.html`**: Image verification - upload photos to verify against registered users.
+- **`settings.html`**: Configuration and data management.
+- **`js/lib/`**: Local JavaScript libraries (offline-ready):
+  - `tf.min.js`: TensorFlow.js core library
+  - `tf-backend-wasm.js`: TensorFlow.js WASM backend
+  - `tfjs-backend-wasm*.wasm`: WASM binary files
+  - `face-api.js`: Face-API.js library
+- **`models/`**: Pre-trained model files (offline-ready):
+  - `tiny_face_detector_model.*`: Fast face detector
+  - `ssd_mobilenetv1_model.*`: Accurate face detector
+  - `face_landmark_68_model.*`: Facial landmark detector
+  - `face_recognition_model.*`: Face descriptor generator
 - **`js/core/`**: Core logic modules:
   - `FaceRegistrationManager.js`: Handles the logic for capturing and validating face samples.
   - `FaceMatcher.js`: Handles the logic for comparing face descriptors.
   - `FaceStorage.js`: Manages IndexedDB operations.
+
+## 📦 Offline Support
+
+All JavaScript libraries and model files are bundled locally, so the application works without internet connectivity. No external CDN requests are required.
 
 ## 🛠️ Usage
 

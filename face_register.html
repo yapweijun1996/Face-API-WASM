@@ -413,11 +413,11 @@
     </style>
 
     <!-- 1. TensorFlow.js -->
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4/dist/tf.min.js"></script>
+    <script src="js/lib/tf.min.js"></script>
     <!-- 2. WASM Backend -->
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-wasm@4/dist/tf-backend-wasm.js"></script>
+    <script src="js/lib/tf-backend-wasm.js"></script>
     <!-- 3. FaceAPI -->
-    <script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api/dist/face-api.js"></script>
+    <script src="js/lib/face-api.js"></script>
     <!-- 4. 我们的模块 -->
     <script src="./js/core/FaceStorage.js"></script>
     <script src="./js/core/FaceRegistrationManager.js"></script>
@@ -535,7 +535,7 @@
         // 可以在这里调整各种参数
         const CONFIG = {
             // 模型路径
-            modelUrl: 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model',
+            modelUrl: './models',
 
             // 检测参数
             detection: {
@@ -681,7 +681,7 @@
                 timing.backendStart = performance.now();
                 setStatus('Setting up WASM backend...');
 
-                const wasmPath = 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-wasm@4/dist/';
+                const wasmPath = './js/lib/';
                 let backendUsed = 'unknown';
 
                 if (typeof tf !== 'undefined' && tf.wasm && tf.wasm.setWasmPaths) {

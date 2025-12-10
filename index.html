@@ -250,14 +250,14 @@
     </style>
 
     <!-- 1. 先加载 TensorFlow.js -->
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4/dist/tf.min.js"></script>
+    <!-- 1. 先加载 TensorFlow.js -->
+    <script src="./js/lib/tf.min.js"></script>
     <!-- 2. 加载 WASM Backend -->
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-wasm@4/dist/tf-backend-wasm.js"></script>
+    <script src="./js/lib/tf-backend-wasm.js"></script>
     <!-- 3. 加载 FaceAPI (nobundle 版本，不含 TFJS) -->
-    <script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api/dist/face-api.esm-nobundle.js"
-        type="module"></script>
+    <script src="./js/lib/face-api.esm-nobundle.js" type="module"></script>
     <!-- 4. 如果需要兼容非 module，用 IIFE bundle -->
-    <script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api/dist/face-api.js"></script>
+    <script src="./js/lib/face-api.js"></script>
 </head>
 
 <body>
@@ -312,7 +312,7 @@
         const errorCloseBtn = document.getElementById('errorCloseBtn');
 
         // CDN model path（官方推荐的 model 目录）
-        const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model';
+        const MODEL_URL = './models';
 
         // ========== UI Helper Functions ==========
         function updateProgress(percent, text) {
@@ -364,7 +364,7 @@
 
                 // 使用 WASM backend - warm-up 更快更稳定
                 // 设置 WASM 文件路径（使用 CDN）
-                const wasmPath = 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-wasm@4/dist/';
+                const wasmPath = './js/lib/';
 
                 // 尝试使用全局 tf 对象设置 WASM 路径
                 if (typeof tf !== 'undefined' && tf.wasm && tf.wasm.setWasmPaths) {
