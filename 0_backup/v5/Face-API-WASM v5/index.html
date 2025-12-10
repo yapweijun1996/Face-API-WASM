@@ -1,0 +1,572 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>FaceAPI Warmup Demo</title>
+    <style>
+        :root {
+            --primary-green: #00d084;
+            --primary-green-hover: #00b871;
+            --primary-green-glow: rgba(0, 208, 132, 0.4);
+            --bg-dark: #0a0a0a;
+            --bg-card: #1a1a1a;
+            --text-primary: #f0f0f0;
+            --text-secondary: #a0a0a0;
+            --error-red: #ff4757;
+            --warning-yellow: #ffa502;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: var(--bg-dark);
+            color: var(--text-primary);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: flex-start;
+            gap: 16px;
+            padding: 24px 16px;
+            min-height: 100vh;
+            margin: 0;
+        }
+
+        h2 {
+            margin: 0;
+            font-size: 1.5rem;
+            font-weight: 600;
+            background: linear-gradient(135deg, var(--primary-green), #00f5a0);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        #controls {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        #statusWrapper {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 14px;
+            color: var(--text-secondary);
+        }
+
+        /* Spinner 动画 */
+        .spinner {
+            width: 16px;
+            height: 16px;
+            border: 2px solid var(--text-secondary);
+            border-top-color: var(--primary-green);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        .spinner.hidden {
+            display: none;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        #status {
+            font-size: 14px;
+        }
+
+        #status.error {
+            color: var(--error-red);
+        }
+
+        #status.success {
+            color: var(--primary-green);
+        }
+
+        /* Progress Bar */
+        #progressWrapper {
+            width: 300px;
+            max-width: 100%;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        #progressWrapper.hidden {
+            display: none;
+        }
+
+        #progressBar {
+            width: 100%;
+            height: 6px;
+            background: var(--bg-card);
+            border-radius: 3px;
+            overflow: hidden;
+        }
+
+        #progressFill {
+            height: 100%;
+            width: 0%;
+            background: linear-gradient(90deg, var(--primary-green), #00f5a0);
+            border-radius: 3px;
+            transition: width 0.3s ease;
+        }
+
+        #progressText {
+            font-size: 12px;
+            color: var(--text-secondary);
+            text-align: center;
+        }
+
+        /* Button 样式 */
+        button {
+            padding: 10px 20px;
+            border-radius: 8px;
+            border: none;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            background: var(--primary-green);
+            color: #000;
+            transition: all 0.2s ease;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+        }
+
+        button:hover:not(:disabled) {
+            background: var(--primary-green-hover);
+            transform: translateY(-1px);
+            box-shadow: 0 4px 16px var(--primary-green-glow);
+        }
+
+        button:active:not(:disabled) {
+            transform: translateY(0);
+        }
+
+        button:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+            background: #444;
+            color: #888;
+        }
+
+        #videoWrapper {
+            position: relative;
+            width: 640px;
+            max-width: 100%;
+            aspect-ratio: 4 / 3;
+            border-radius: 16px;
+            overflow: hidden;
+            background: var(--bg-card);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        #video,
+        #overlay {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1);
+        }
+
+        /* 错误提示框 */
+        #errorModal {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.8);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.3s ease;
+        }
+
+        #errorModal.visible {
+            opacity: 1;
+            visibility: visible;
+        }
+
+        .error-content {
+            background: var(--bg-card);
+            padding: 24px;
+            border-radius: 16px;
+            max-width: 400px;
+            text-align: center;
+            border: 1px solid rgba(255, 71, 87, 0.3);
+            box-shadow: 0 8px 32px rgba(255, 71, 87, 0.2);
+        }
+
+        .error-content h3 {
+            color: var(--error-red);
+            margin: 0 0 12px 0;
+            font-size: 1.2rem;
+        }
+
+        .error-content p {
+            color: var(--text-secondary);
+            margin: 0 0 16px 0;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+
+        .error-content button {
+            background: var(--error-red);
+        }
+
+        .error-content button:hover:not(:disabled) {
+            background: #ff6b7a;
+            box-shadow: 0 4px 16px rgba(255, 71, 87, 0.4);
+        }
+
+        /* 返回链接 */
+        .back-link {
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-size: 13px;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            margin-top: 20px;
+        }
+
+        .back-link:hover {
+            color: var(--text-primary);
+        }
+    </style>
+
+    <!-- 1. 先加载 TensorFlow.js -->
+    <!-- 1. 先加载 TensorFlow.js -->
+    <script src="./js/lib/tf.min.js"></script>
+    <!-- 2. 加载 WASM Backend -->
+    <script src="./js/lib/tf-backend-wasm.js"></script>
+    <!-- 3. 加载 FaceAPI (nobundle 版本，不含 TFJS) -->
+    <script src="./js/lib/face-api.esm-nobundle.js" type="module"></script>
+    <!-- 4. 如果需要兼容非 module，用 IIFE bundle -->
+    <script src="./js/lib/face-api.js"></script>
+</head>
+
+<body>
+    <h2>🎭 FaceAPI + Hidden Warm-up Demo</h2>
+
+    <div id="controls">
+        <button id="startBtn" disabled>▶ Start Camera</button>
+        <div id="statusWrapper">
+            <div id="spinner" class="spinner"></div>
+            <span id="status">Loading…</span>
+        </div>
+    </div>
+
+    <!-- Progress Bar -->
+    <div id="progressWrapper">
+        <div id="progressBar">
+            <div id="progressFill"></div>
+        </div>
+        <span id="progressText">Initializing...</span>
+    </div>
+
+    <div id="videoWrapper">
+        <video id="video" autoplay muted playsinline></video>
+        <canvas id="overlay"></canvas>
+    </div>
+
+    <!-- Error Modal -->
+    <div id="errorModal">
+        <div class="error-content">
+            <h3>⚠️ Camera Error</h3>
+            <p id="errorMessage">Unable to access camera.</p>
+            <button id="errorCloseBtn">Close</button>
+        </div>
+    </div>
+
+    <!-- 返回首页链接 -->
+    <a href="home.html" class="back-link">← Back to Home</a>
+
+    <script>
+        // DOM Elements
+        const statusEl = document.getElementById('status');
+        const startBtn = document.getElementById('startBtn');
+        const video = document.getElementById('video');
+        const overlay = document.getElementById('overlay');
+        const overlayCtx = overlay.getContext('2d');
+        const spinner = document.getElementById('spinner');
+        const progressWrapper = document.getElementById('progressWrapper');
+        const progressFill = document.getElementById('progressFill');
+        const progressText = document.getElementById('progressText');
+        const errorModal = document.getElementById('errorModal');
+        const errorMessage = document.getElementById('errorMessage');
+        const errorCloseBtn = document.getElementById('errorCloseBtn');
+
+        // CDN model path（官方推荐的 model 目录）
+        const MODEL_URL = './models';
+
+        // ========== UI Helper Functions ==========
+        function updateProgress(percent, text) {
+            progressFill.style.width = `${percent}%`;
+            progressText.textContent = text;
+        }
+
+        function showSpinner() {
+            spinner.classList.remove('hidden');
+        }
+
+        function hideSpinner() {
+            spinner.classList.add('hidden');
+        }
+
+        function showProgress() {
+            progressWrapper.classList.remove('hidden');
+        }
+
+        function hideProgress() {
+            progressWrapper.classList.add('hidden');
+        }
+
+        function setStatus(text, type = 'normal') {
+            statusEl.textContent = text;
+            statusEl.className = type; // 'normal', 'error', 'success'
+        }
+
+        function showError(title, message) {
+            errorMessage.textContent = message;
+            errorModal.classList.add('visible');
+        }
+
+        function hideError() {
+            errorModal.classList.remove('visible');
+        }
+
+        // ========== Core Functions ==========
+
+        // 初始化：设置 backend、加载模型、做一次 warm-up
+        async function initFaceApi() {
+            try {
+                showSpinner();
+                showProgress();
+
+                console.log('🚀 Starting Face API initialization...');
+                const pageStart = performance.now();
+
+                // Step 1: Backend setup (10%)
+                setStatus('Setting backend…');
+                updateProgress(10, 'Setting up WASM backend...');
+                const backendStart = performance.now();
+
+                // 使用 WASM backend - warm-up 更快更稳定
+                // 设置 WASM 文件路径（使用 CDN）
+                const wasmPath = './js/lib/';
+                let backendUsed = 'unknown';
+
+                // 尝试使用全局 tf 对象设置 WASM 路径
+                if (typeof tf !== 'undefined' && tf.wasm && tf.wasm.setWasmPaths) {
+                    tf.wasm.setWasmPaths(wasmPath);
+                    await tf.setBackend('wasm');
+                    await tf.ready();
+                    backendUsed = 'wasm';
+                    console.log('✅ WASM backend ready:', tf.getBackend());
+                } else {
+                    // Fallback 到 WebGL
+                    console.warn('⚠️ WASM not available, falling back to WebGL');
+                    await faceapi.tf.setBackend('webgl');
+                    await faceapi.tf.ready();
+                    backendUsed = 'webgl';
+                    console.log('✅ WebGL backend ready:', faceapi.tf.getBackend());
+                }
+
+                const backendEnd = performance.now();
+                console.log(`⏱️ Backend setup (${backendUsed}): ${(backendEnd - backendStart).toFixed(0)}ms`);
+
+                // Step 2: Load models (10% -> 80%)
+                setStatus('Loading models…');
+                updateProgress(20, 'Loading TinyFaceDetector...');
+                const modelsStart = performance.now();
+
+                // 逐个加载模型以显示进度
+                await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL);
+                console.log('  📦 TinyFaceDetector loaded');
+                updateProgress(40, 'Loading FaceLandmark68Net...');
+
+                await faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL);
+                console.log('  📦 FaceLandmark68Net loaded');
+                updateProgress(60, 'Loading FaceRecognitionNet...');
+
+                await faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL);
+                console.log('  📦 FaceRecognitionNet loaded');
+                updateProgress(80, 'Models loaded!');
+
+                const modelsEnd = performance.now();
+                console.log(`⏱️ Models loading: ${(modelsEnd - modelsStart).toFixed(0)}ms`);
+
+                // Step 3: Warm-up (80% -> 100%)
+                setStatus('Warming up model…');
+                updateProgress(90, 'Warming up model...');
+                const warmupStart = performance.now();
+
+                // 做一次隐藏 warm-up：dummy canvas + 一次 detect
+                await warmupOnce();
+
+                const warmupEnd = performance.now();
+                console.log(`⏱️ Warm-up: ${(warmupEnd - warmupStart).toFixed(0)}ms`);
+
+                updateProgress(100, 'Ready!');
+
+                // 完成
+                const totalTime = performance.now() - pageStart;
+                console.log('────────────────────────────────');
+                console.log(`🚀 Total initialization time: ${totalTime.toFixed(0)}ms`);
+                console.log('────────────────────────────────');
+
+                hideSpinner();
+                setTimeout(() => hideProgress(), 500);
+
+                setStatus('Ready ✅ Click "Start Camera"', 'success');
+                startBtn.disabled = false;
+
+            } catch (err) {
+                console.error('❌ InitFaceApi Error:', err);
+                hideSpinner();
+                hideProgress();
+                setStatus('❌ Error: ' + err.message, 'error');
+            }
+        }
+
+        async function warmupOnce() {
+            const dummy = document.createElement('canvas');
+            dummy.width = 160;
+            dummy.height = 120;
+            const ctx = dummy.getContext('2d');
+            ctx.fillStyle = 'black';
+            ctx.fillRect(0, 0, dummy.width, dummy.height);
+
+            await faceapi.detectAllFaces(
+                dummy,
+                new faceapi.TinyFaceDetectorOptions()
+            );
+        }
+
+        async function startCamera() {
+            startBtn.disabled = true;
+            showSpinner();
+            setStatus('Starting camera…');
+
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: 'user' },
+                    audio: false,
+                });
+
+                video.srcObject = stream;
+
+                video.onloadedmetadata = () => {
+                    resizeOverlay();
+                    video.play();
+                    hideSpinner();
+                    setStatus('🎥 Detecting faces…', 'success');
+                    runDetectionLoop();
+                };
+
+            } catch (err) {
+                console.error('Camera Error:', err);
+                hideSpinner();
+                startBtn.disabled = false;
+
+                // 根据错误类型显示不同的消息
+                let errorMsg = 'Unable to access camera.';
+
+                if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+                    errorMsg = 'Camera permission denied. Please allow camera access in your browser settings and refresh the page.';
+                } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+                    errorMsg = 'No camera found. Please connect a camera and try again.';
+                } else if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
+                    errorMsg = 'Camera is in use by another application. Please close other apps using the camera and try again.';
+                } else if (err.name === 'OverconstrainedError') {
+                    errorMsg = 'Camera does not meet the required constraints. Please try a different camera.';
+                } else if (err.name === 'TypeError') {
+                    errorMsg = 'Camera access is not supported. Please use HTTPS or localhost.';
+                } else {
+                    errorMsg = `Camera error: ${err.message || err.name}`;
+                }
+
+                setStatus('❌ Camera failed', 'error');
+                showError('Camera Error', errorMsg);
+            }
+        }
+
+        function resizeOverlay() {
+            const rect = video.getBoundingClientRect();
+            overlay.width = rect.width;
+            overlay.height = rect.height;
+        }
+
+        async function runDetectionLoop() {
+            const options = new faceapi.TinyFaceDetectorOptions({ inputSize: 320 });
+
+            const loop = async () => {
+                if (video.readyState === video.HAVE_ENOUGH_DATA) {
+                    const results = await faceapi
+                        .detectAllFaces(video, options)
+                        .withFaceLandmarks();
+
+                    // 清除画布
+                    overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
+
+                    // 匹配尺寸，把人脸框缩放到当前 video 尺寸
+                    const dims = { width: video.videoWidth, height: video.videoHeight };
+                    const resized = faceapi.resizeResults(results, dims);
+
+                    const scaleX = overlay.width / dims.width;
+                    const scaleY = overlay.height / dims.height;
+
+                    resized.forEach(r => {
+                        const box = r.detection.box;
+                        overlayCtx.strokeStyle = '#00d084';
+                        overlayCtx.lineWidth = 2;
+                        overlayCtx.strokeRect(
+                            box.x * scaleX,
+                            box.y * scaleY,
+                            box.width * scaleX,
+                            box.height * scaleY
+                        );
+                    });
+
+                    setStatus(`🎯 Faces detected: ${results.length}`, results.length > 0 ? 'success' : 'normal');
+                }
+
+                requestAnimationFrame(loop);
+            };
+
+            loop();
+        }
+
+        // ========== Event Listeners ==========
+        startBtn.addEventListener('click', startCamera);
+        errorCloseBtn.addEventListener('click', hideError);
+        errorModal.addEventListener('click', (e) => {
+            if (e.target === errorModal) hideError();
+        });
+
+        // 页面加载时自动开始后台初始化 + warm-up
+        window.addEventListener('load', () => {
+            initFaceApi();
+        });
+
+        // 窗口尺寸变化时，重设 overlay 尺寸
+        window.addEventListener('resize', resizeOverlay);
+    </script>
+</body>
+
+</html>

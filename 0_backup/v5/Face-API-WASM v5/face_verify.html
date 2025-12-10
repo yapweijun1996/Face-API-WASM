@@ -1,0 +1,979 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Face Verification - Modern UI</title>
+    <style>
+        :root {
+            --primary-green: #00d084;
+            --primary-green-hover: #00b871;
+            --primary-green-glow: rgba(0, 208, 132, 0.4);
+            --bg-dark: #0a0a0a;
+            --bg-card: #1a1a1a;
+            --bg-card-hover: #252525;
+            --text-primary: #f0f0f0;
+            --text-secondary: #a0a0a0;
+            --error-red: #ff4757;
+            --warning-yellow: #ffa502;
+            --info-blue: #3498db;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: var(--bg-dark);
+            color: var(--text-primary);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: flex-start;
+            gap: 16px;
+            padding: 24px 16px;
+            min-height: 100vh;
+            margin: 0;
+        }
+
+        h2 {
+            margin: 0;
+            font-size: 1.5rem;
+            font-weight: 600;
+            background: linear-gradient(135deg, var(--warning-yellow), #ffcc00);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        /* 控制面板 */
+        .control-panel {
+            background: var(--bg-card);
+            border-radius: 12px;
+            padding: 20px;
+            width: 100%;
+            max-width: 500px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .control-panel.hidden {
+            display: none;
+        }
+
+        .panel-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+        }
+
+        /* 数据源选择 */
+        .data-source {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+
+        .source-card {
+            flex: 1;
+            min-width: 140px;
+            background: var(--bg-dark);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            padding: 16px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .source-card:hover {
+            border-color: var(--primary-green);
+            background: var(--bg-card-hover);
+        }
+
+        .source-card.active {
+            border-color: var(--primary-green);
+            background: rgba(0, 208, 132, 0.1);
+        }
+
+        .source-card .icon {
+            font-size: 24px;
+            margin-bottom: 8px;
+        }
+
+        .source-card .label {
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        /* 用户列表 */
+        .user-list {
+            max-height: 200px;
+            overflow-y: auto;
+            background: var(--bg-dark);
+            border-radius: 8px;
+            padding: 12px;
+        }
+
+        .user-list.empty {
+            text-align: center;
+            color: var(--text-secondary);
+            padding: 24px;
+        }
+
+        .user-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 10px;
+            border-radius: 8px;
+            margin-bottom: 4px;
+            transition: background 0.2s;
+        }
+
+        .user-item:hover {
+            background: var(--bg-card);
+        }
+
+        .user-item .avatar {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, var(--primary-green), #00f5a0);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+            font-size: 14px;
+            color: #000;
+        }
+
+        .user-item .info {
+            flex: 1;
+        }
+
+        .user-item .name {
+            font-weight: 500;
+            font-size: 14px;
+        }
+
+        .user-item .id {
+            font-size: 11px;
+            color: var(--text-secondary);
+        }
+
+        .user-item .status {
+            font-size: 20px;
+        }
+
+        .user-item.verified {
+            background: rgba(0, 208, 132, 0.1);
+        }
+
+        .user-item.verified .status::after {
+            content: '✓';
+            color: var(--primary-green);
+        }
+
+        /* 按钮 */
+        button {
+            padding: 12px 24px;
+            border-radius: 8px;
+            border: none;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: all 0.2s ease;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+        }
+
+        .btn-primary {
+            background: var(--warning-yellow);
+            color: #000;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            background: #ffb300;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 16px rgba(255, 165, 2, 0.4);
+        }
+
+        .btn-secondary {
+            background: var(--bg-card);
+            color: var(--text-primary);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .btn-secondary:hover:not(:disabled) {
+            background: var(--bg-card-hover);
+        }
+
+        .btn-danger {
+            background: var(--error-red);
+            color: #fff;
+        }
+
+        button:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+
+        /* 文件上传 */
+        .file-upload {
+            display: none;
+        }
+
+        /* 状态显示 */
+        #statusWrapper {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 14px;
+            color: var(--text-secondary);
+        }
+
+        .spinner {
+            width: 16px;
+            height: 16px;
+            border: 2px solid var(--text-secondary);
+            border-top-color: var(--warning-yellow);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        .spinner.hidden {
+            display: none;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        #status.success {
+            color: var(--primary-green);
+        }
+
+        #status.error {
+            color: var(--error-red);
+        }
+
+        /* Video 区域 */
+        #videoWrapper {
+            position: relative;
+            width: 500px;
+            max-width: 100%;
+            aspect-ratio: 4 / 3;
+            border-radius: 16px;
+            overflow: hidden;
+            background: var(--bg-card);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+            border: 2px solid rgba(255, 255, 255, 0.1);
+        }
+
+        #videoWrapper.hidden {
+            display: none;
+        }
+
+        #videoWrapper.matched {
+            border-color: var(--primary-green);
+            box-shadow: 0 0 30px var(--primary-green-glow);
+        }
+
+        #videoWrapper.no-match {
+            border-color: var(--error-red);
+        }
+
+        #video,
+        #overlay {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        #video {
+            transform: scaleX(-1);
+        }
+
+        #overlay {
+            transform: scaleX(-1);
+        }
+
+        /* 匹配结果显示 */
+        #matchResult {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: linear-gradient(transparent, rgba(0, 0, 0, 0.9));
+            padding: 40px 20px 20px;
+            text-align: center;
+            transition: all 0.3s ease;
+        }
+
+        #matchResult.hidden {
+            opacity: 0;
+            transform: translateY(20px);
+        }
+
+        #matchResult .match-name {
+            font-size: 24px;
+            font-weight: 700;
+            margin-bottom: 4px;
+        }
+
+        #matchResult .match-confidence {
+            font-size: 14px;
+            color: var(--text-secondary);
+        }
+
+        #matchResult.matched .match-name {
+            color: var(--primary-green);
+        }
+
+        #matchResult.no-match .match-name {
+            color: var(--error-red);
+        }
+
+        /* 统计信息 */
+        .stats-bar {
+            display: flex;
+            gap: 20px;
+            justify-content: center;
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        .stat-item {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .stat-value {
+            color: var(--warning-yellow);
+            font-weight: 600;
+        }
+
+        /* 控制按钮 */
+        .controls {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        .controls.hidden {
+            display: none;
+        }
+
+        /* 返回链接 */
+        .back-link {
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-size: 13px;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            margin-top: 20px;
+        }
+
+        .back-link:hover {
+            color: var(--text-primary);
+        }
+    </style>
+
+    <!-- 1. TensorFlow.js -->
+    <script src="./js/lib/tf.min.js"></script>
+    <!-- 2. WASM Backend -->
+    <script src="./js/lib/tf-backend-wasm.js"></script>
+    <!-- 3. FaceAPI -->
+    <script src="./js/lib/face-api.js"></script>
+    <!-- 4. 我们的模块 -->
+    <script src="./js/core/FaceStorage.js"></script>
+    <script src="./js/core/FaceMatcher.js"></script>
+</head>
+
+<body>
+    <h2>🔐 Face Verification</h2>
+
+    <!-- 控制面板 -->
+    <div id="controlPanel" class="control-panel">
+        <div>
+            <div class="panel-title">📂 Data Source</div>
+            <div class="data-source">
+                <div class="source-card" id="sourceIndexedDB" onclick="selectSource('indexeddb')">
+                    <div class="icon">💾</div>
+                    <div class="label">IndexedDB</div>
+                </div>
+                <div class="source-card" id="sourceJSON" onclick="selectSource('json')">
+                    <div class="icon">📄</div>
+                    <div class="label">Upload JSON</div>
+                </div>
+            </div>
+            <input type="file" id="jsonFileInput" class="file-upload" accept=".json" onchange="handleFileUpload(event)">
+        </div>
+
+        <div>
+            <div class="panel-title">👥 Registered Users (<span id="userCount">0</span>)</div>
+            <div id="userList" class="user-list empty">
+                No users loaded. Select a data source above.
+            </div>
+        </div>
+
+        <button id="startVerifyBtn" class="btn-primary" disabled>
+            <span>🎥</span> Start Verification
+        </button>
+
+        <div id="statusWrapper">
+            <div id="spinner" class="spinner hidden"></div>
+            <span id="status">Select a data source to begin</span>
+        </div>
+    </div>
+
+    <!-- Video 区域 -->
+    <div id="videoWrapper" class="hidden">
+        <video id="video" autoplay muted playsinline></video>
+        <canvas id="overlay"></canvas>
+        <div id="matchResult" class="hidden">
+            <div class="match-name">Scanning...</div>
+            <div class="match-confidence"></div>
+        </div>
+    </div>
+
+    <!-- 统计信息 -->
+    <div id="statsBar" class="stats-bar hidden">
+        <div class="stat-item">
+            <span>FPS:</span>
+            <span class="stat-value" id="statFps">--</span>
+        </div>
+        <div class="stat-item">
+            <span>Match Time:</span>
+            <span class="stat-value" id="statMatchTime">--</span>
+        </div>
+        <div class="stat-item">
+            <span>Matches:</span>
+            <span class="stat-value" id="statMatches">0</span>
+        </div>
+    </div>
+
+    <!-- 控制按钮 -->
+    <div id="verifyControls" class="controls hidden">
+        <button id="stopBtn" class="btn-danger">⏹ Stop</button>
+        <button id="resetBtn" class="btn-secondary">🔄 Reset</button>
+    </div>
+
+    <a href="home.html" class="back-link">← Back to Home</a>
+
+    <script>
+        // ========== Load Settings from localStorage ==========
+        const SETTINGS_KEY = 'faceRecognitionSettings';
+        const savedSettings = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
+
+        const CONFIG = {
+            modelUrl: './models',
+
+            detection: {
+                detectorModel: savedSettings.detection?.detectorModel || 'tiny',
+                inputSize: savedSettings.detection?.inputSize || 320,
+                scoreThreshold: savedSettings.detection?.scoreThreshold || 0.5,
+            },
+
+            matching: {
+                matchThreshold: savedSettings.matching?.matchThreshold || 0.6,
+                highConfidenceThreshold: savedSettings.matching?.highConfidenceThreshold || 0.4,
+            },
+
+            performance: {
+                logTiming: true,
+                showFPS: savedSettings.performance?.showFPS !== false,
+            }
+        };
+
+        console.log('📋 Loaded CONFIG from settings:', CONFIG);
+
+        // ========== DOM Elements ==========
+        const controlPanel = document.getElementById('controlPanel');
+        const sourceIndexedDB = document.getElementById('sourceIndexedDB');
+        const sourceJSON = document.getElementById('sourceJSON');
+        const jsonFileInput = document.getElementById('jsonFileInput');
+        const userList = document.getElementById('userList');
+        const userCount = document.getElementById('userCount');
+        const startVerifyBtn = document.getElementById('startVerifyBtn');
+        const statusWrapper = document.getElementById('statusWrapper');
+        const spinner = document.getElementById('spinner');
+        const status = document.getElementById('status');
+
+        const videoWrapper = document.getElementById('videoWrapper');
+        const video = document.getElementById('video');
+        const overlay = document.getElementById('overlay');
+        const overlayCtx = overlay.getContext('2d');
+        const matchResult = document.getElementById('matchResult');
+
+        const statsBar = document.getElementById('statsBar');
+        const statFps = document.getElementById('statFps');
+        const statMatchTime = document.getElementById('statMatchTime');
+        const statMatches = document.getElementById('statMatches');
+
+        const verifyControls = document.getElementById('verifyControls');
+        const stopBtn = document.getElementById('stopBtn');
+        const resetBtn = document.getElementById('resetBtn');
+
+        // ========== State ==========
+        let faceMatcher = null;
+        let isDetecting = false;
+        let detectionLoop = null;
+        let faceApiReady = false;
+        let verifiedUsers = new Set();
+
+        // Timing
+        const timing = {
+            pageStart: performance.now(),
+            detectionCount: 0,
+            lastFpsUpdate: 0,
+            currentFps: 0,
+        };
+
+        // ========== UI Helpers ==========
+        function showSpinner() {
+            spinner.classList.remove('hidden');
+        }
+
+        function hideSpinner() {
+            spinner.classList.add('hidden');
+        }
+
+        function setStatus(text, type = 'normal') {
+            status.textContent = text;
+            status.className = type;
+        }
+
+        function updateUserList(users) {
+            userCount.textContent = users.length;
+
+            if (users.length === 0) {
+                userList.className = 'user-list empty';
+                userList.innerHTML = 'No users loaded. Select a data source above.';
+                return;
+            }
+
+            userList.className = 'user-list';
+            userList.innerHTML = users.map(u => `
+                <div class="user-item" data-user-id="${u.id}">
+                    <div class="avatar">${(u.name || u.id).charAt(0).toUpperCase()}</div>
+                    <div class="info">
+                        <div class="name">${u.name || 'Unknown'}</div>
+                        <div class="id">${u.id}</div>
+                    </div>
+                    <div class="status"></div>
+                </div>
+            `).join('');
+        }
+
+        function markUserVerified(userId) {
+            const item = userList.querySelector(`[data-user-id="${userId}"]`);
+            if (item && !item.classList.contains('verified')) {
+                item.classList.add('verified');
+                verifiedUsers.add(userId);
+            }
+        }
+
+        function showMatchResult(result) {
+            matchResult.classList.remove('hidden', 'matched', 'no-match');
+
+            if (result.status === 'matched') {
+                matchResult.classList.add('matched');
+                matchResult.querySelector('.match-name').textContent = `✓ ${result.user.name}`;
+                matchResult.querySelector('.match-confidence').textContent =
+                    `Confidence: ${result.confidence.toFixed(1)}%`;
+
+                videoWrapper.classList.remove('no-match');
+                videoWrapper.classList.add('matched');
+
+                markUserVerified(result.user.id);
+            } else {
+                matchResult.classList.add('no-match');
+                matchResult.querySelector('.match-name').textContent = 'Unknown';
+                matchResult.querySelector('.match-confidence').textContent =
+                    `No match found`;
+
+                videoWrapper.classList.remove('matched');
+                videoWrapper.classList.add('no-match');
+            }
+        }
+
+        function updateStats() {
+            const stats = faceMatcher.getStats();
+            statMatches.textContent = stats.successfulMatches;
+            statMatchTime.textContent = stats.lastMatchTime.toFixed(0) + 'ms';
+        }
+
+        // ========== Data Source ==========
+        function selectSource(source) {
+            // Reset active state
+            sourceIndexedDB.classList.remove('active');
+            sourceJSON.classList.remove('active');
+
+            if (source === 'indexeddb') {
+                sourceIndexedDB.classList.add('active');
+                loadFromIndexedDB();
+            } else if (source === 'json') {
+                sourceJSON.classList.add('active');
+                jsonFileInput.click();
+            }
+        }
+
+        async function loadFromIndexedDB() {
+            showSpinner();
+            setStatus('Loading from IndexedDB...');
+
+            try {
+                await faceStorage.init();
+                const result = await faceMatcher.loadFromStorage(faceStorage);
+
+                if (result.success && result.count > 0) {
+                    updateUserList(faceMatcher.getRegisteredUsers());
+                    setStatus(`Loaded ${result.count} users from IndexedDB`, 'success');
+                    startVerifyBtn.disabled = !faceApiReady;
+                } else {
+                    setStatus('No registered users found in IndexedDB', 'error');
+                    updateUserList([]);
+                }
+            } catch (error) {
+                setStatus('Failed to load from IndexedDB: ' + error.message, 'error');
+            }
+
+            hideSpinner();
+        }
+
+        async function handleFileUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            showSpinner();
+            setStatus('Loading JSON file...');
+
+            try {
+                const result = await faceMatcher.loadFromFile(file);
+
+                if (result.success) {
+                    updateUserList(faceMatcher.getRegisteredUsers());
+                    setStatus(`Loaded ${result.count} users from JSON`, 'success');
+                    startVerifyBtn.disabled = !faceApiReady;
+                } else {
+                    setStatus('Failed to parse JSON: ' + result.error, 'error');
+                }
+            } catch (error) {
+                setStatus('Failed to read file: ' + error.message, 'error');
+            }
+
+            hideSpinner();
+            event.target.value = ''; // Reset file input
+        }
+
+        // ========== Face API ==========
+        async function initFaceApi() {
+            try {
+                showSpinner();
+
+                console.log('🚀 Starting Face API initialization...');
+                const initStart = performance.now();
+
+                // Setup WASM backend
+                const backendStart = performance.now();
+                const wasmPath = './js/lib/';
+                let backendUsed = 'unknown';
+
+                if (typeof tf !== 'undefined' && tf.wasm && tf.wasm.setWasmPaths) {
+                    tf.wasm.setWasmPaths(wasmPath);
+                    await tf.setBackend('wasm');
+                    await tf.ready();
+                    backendUsed = 'wasm';
+                    console.log('✅ WASM backend ready:', tf.getBackend());
+                } else {
+                    await faceapi.tf.setBackend('webgl');
+                    await faceapi.tf.ready();
+                    backendUsed = 'webgl';
+                    console.log('✅ WebGL backend ready:', faceapi.tf.getBackend());
+                }
+
+                const backendEnd = performance.now();
+                console.log(`⏱️ Backend setup (${backendUsed}): ${(backendEnd - backendStart).toFixed(0)}ms`);
+
+                // Load models based on selected detector
+                setStatus('Loading models...');
+                const modelsStart = performance.now();
+                const detectorModel = CONFIG.detection.detectorModel;
+                console.log(`🔧 Using detector model: ${detectorModel}`);
+
+                if (detectorModel === 'ssd') {
+                    await faceapi.nets.ssdMobilenetv1.loadFromUri(CONFIG.modelUrl);
+                    console.log('  📦 SSD Mobilenet V1 loaded');
+                    await faceapi.nets.faceLandmark68Net.loadFromUri(CONFIG.modelUrl);
+                    console.log('  📦 FaceLandmark68Net loaded');
+                    await faceapi.nets.faceRecognitionNet.loadFromUri(CONFIG.modelUrl);
+                    console.log('  📦 FaceRecognitionNet loaded');
+                } else {
+                    await faceapi.nets.tinyFaceDetector.loadFromUri(CONFIG.modelUrl);
+                    console.log('  📦 TinyFaceDetector loaded');
+                    await faceapi.nets.faceLandmark68Net.loadFromUri(CONFIG.modelUrl);
+                    console.log('  📦 FaceLandmark68Net loaded');
+                    await faceapi.nets.faceRecognitionNet.loadFromUri(CONFIG.modelUrl);
+                    console.log('  📦 FaceRecognitionNet loaded');
+                }
+
+                const modelsEnd = performance.now();
+                console.log(`⏱️ Models loading: ${(modelsEnd - modelsStart).toFixed(0)}ms`);
+
+                // Warm-up
+                setStatus('Warming up...');
+                const warmupStart = performance.now();
+                await warmupOnce();
+                const warmupEnd = performance.now();
+                console.log(`⏱️ Warm-up: ${(warmupEnd - warmupStart).toFixed(0)}ms`);
+
+                // Initialize matcher with settings
+                console.log(`⚙️ Match Threshold: ${CONFIG.matching.matchThreshold}`);
+                faceMatcher = new FaceMatcher({
+                    matchThreshold: CONFIG.matching.matchThreshold,
+                    highConfidenceThreshold: CONFIG.matching.highConfidenceThreshold,
+                });
+                console.log(`✅ FaceMatcher initialized with threshold: ${faceMatcher.config.matchThreshold}`);
+
+                const totalTime = performance.now() - initStart;
+                console.log('────────────────────────────────');
+                console.log(`🚀 Total initialization time: ${totalTime.toFixed(0)}ms`);
+                console.log('────────────────────────────────');
+
+                faceApiReady = true;
+                hideSpinner();
+                setStatus('Ready! Load user data to begin.', 'success');
+
+                // Try loading from IndexedDB automatically
+                selectSource('indexeddb');
+
+            } catch (error) {
+                console.error('❌ Init error:', error);
+                hideSpinner();
+                setStatus('Error: ' + error.message, 'error');
+            }
+        }
+
+        async function warmupOnce() {
+            const dummy = document.createElement('canvas');
+            dummy.width = 160;
+            dummy.height = 120;
+            const ctx = dummy.getContext('2d');
+            ctx.fillStyle = 'black';
+            ctx.fillRect(0, 0, dummy.width, dummy.height);
+
+            if (CONFIG.detection.detectorModel === 'ssd') {
+                await faceapi.detectAllFaces(dummy, new faceapi.SsdMobilenetv1Options());
+            } else {
+                await faceapi.detectAllFaces(dummy, new faceapi.TinyFaceDetectorOptions());
+            }
+        }
+
+        // ========== Camera & Detection ==========
+        async function startCamera() {
+            const stream = await navigator.mediaDevices.getUserMedia({
+                video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
+                audio: false,
+            });
+
+            video.srcObject = stream;
+
+            return new Promise((resolve) => {
+                video.onloadedmetadata = () => {
+                    overlay.width = video.videoWidth;
+                    overlay.height = video.videoHeight;
+                    video.play();
+                    resolve();
+                };
+            });
+        }
+
+        function stopCamera() {
+            if (video.srcObject) {
+                const tracks = video.srcObject.getTracks();
+                tracks.forEach(track => track.stop());
+                video.srcObject = null;
+            }
+            isDetecting = false;
+            if (detectionLoop) {
+                cancelAnimationFrame(detectionLoop);
+                detectionLoop = null;
+            }
+        }
+
+        async function runDetectionLoop() {
+            // Create detector options based on model
+            let detectorOptions;
+            if (CONFIG.detection.detectorModel === 'ssd') {
+                detectorOptions = new faceapi.SsdMobilenetv1Options({
+                    minConfidence: CONFIG.detection.scoreThreshold
+                });
+            } else {
+                detectorOptions = new faceapi.TinyFaceDetectorOptions({
+                    inputSize: CONFIG.detection.inputSize,
+                    scoreThreshold: CONFIG.detection.scoreThreshold
+                });
+            }
+            isDetecting = true;
+            timing.lastFpsUpdate = performance.now();
+
+            const loop = async () => {
+                if (!isDetecting || video.paused || video.ended) {
+                    return;
+                }
+
+                if (video.readyState === video.HAVE_ENOUGH_DATA) {
+                    const detectStart = performance.now();
+
+                    // Detect face with descriptor
+                    const detection = await faceapi
+                        .detectSingleFace(video, detectorOptions)
+                        .withFaceLandmarks()
+                        .withFaceDescriptor();
+
+                    const detectEnd = performance.now();
+
+                    // FPS calculation
+                    timing.detectionCount++;
+                    const now = performance.now();
+                    if (now - timing.lastFpsUpdate >= 1000) {
+                        timing.currentFps = timing.detectionCount;
+                        timing.detectionCount = 0;
+                        timing.lastFpsUpdate = now;
+                        statFps.textContent = timing.currentFps;
+                    }
+
+                    // Clear overlay
+                    overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
+
+                    // Helper: 绘制镜像翻转后正常显示的文字
+                    function drawTextMirrored(text, x, y, color, font) {
+                        overlayCtx.save();
+                        overlayCtx.font = font;
+                        overlayCtx.fillStyle = color;
+                        overlayCtx.translate(x, y);
+                        overlayCtx.scale(-1, 1);
+                        overlayCtx.fillText(text, 0, 0);
+                        overlayCtx.restore();
+                    }
+
+                    if (detection) {
+                        // Draw face box
+                        const box = detection.detection.box;
+
+                        // Match face
+                        const matchResultData = faceMatcher.findBestMatch(detection.descriptor);
+
+                        // Draw box with color based on match
+                        const boxColor = matchResultData.status === 'matched' ? '#00d084' : '#ff4757';
+                        overlayCtx.strokeStyle = boxColor;
+                        overlayCtx.lineWidth = 3;
+                        overlayCtx.strokeRect(box.x, box.y, box.width, box.height);
+
+                        // Draw label (显示在人脸框上方)
+                        const label = matchResultData.status === 'matched'
+                            ? `${matchResultData.user.name} (${matchResultData.confidence.toFixed(0)}%)`
+                            : 'Unknown';
+                        drawTextMirrored(label, box.x, box.y - 8, boxColor, '14px sans-serif');
+
+                        // Show result
+                        showMatchResult(matchResultData);
+                        updateStats();
+                    } else {
+                        matchResult.classList.add('hidden');
+                        videoWrapper.classList.remove('matched', 'no-match');
+                    }
+
+                    // Draw FPS (显示在用户看到的左上角)
+                    if (CONFIG.performance.showFPS) {
+                        drawTextMirrored(`FPS: ${timing.currentFps}`, 100, 30, '#ffa502', '12px monospace');
+                    }
+                }
+
+                detectionLoop = requestAnimationFrame(loop);
+            };
+
+            loop();
+        }
+
+        // ========== Verification Flow ==========
+        async function startVerification() {
+            if (!faceMatcher.isReady()) {
+                alert('Please load user data first');
+                return;
+            }
+
+            try {
+                // Show video, hide panel
+                controlPanel.classList.add('hidden');
+                videoWrapper.classList.remove('hidden');
+                statsBar.classList.remove('hidden');
+                verifyControls.classList.remove('hidden');
+                verifiedUsers.clear();
+
+                // Reset user list verification status
+                document.querySelectorAll('.user-item').forEach(item => {
+                    item.classList.remove('verified');
+                });
+
+                await startCamera();
+                runDetectionLoop();
+
+            } catch (error) {
+                alert('Failed to start camera: ' + error.message);
+                stopVerification();
+            }
+        }
+
+        function stopVerification() {
+            stopCamera();
+
+            // Reset UI
+            videoWrapper.classList.add('hidden');
+            statsBar.classList.add('hidden');
+            verifyControls.classList.add('hidden');
+            controlPanel.classList.remove('hidden');
+            matchResult.classList.add('hidden');
+            videoWrapper.classList.remove('matched', 'no-match');
+        }
+
+        function resetVerification() {
+            verifiedUsers.clear();
+            document.querySelectorAll('.user-item').forEach(item => {
+                item.classList.remove('verified');
+            });
+            faceMatcher.stats.successfulMatches = 0;
+            faceMatcher.stats.totalMatches = 0;
+            updateStats();
+        }
+
+        // ========== Event Listeners ==========
+        startVerifyBtn.addEventListener('click', startVerification);
+        stopBtn.addEventListener('click', stopVerification);
+        resetBtn.addEventListener('click', resetVerification);
+
+        // Initialize on load
+        window.addEventListener('load', initFaceApi);
+    </script>
+</body>
+
+</html>
