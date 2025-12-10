@@ -1,0 +1,1016 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Settings - Face Recognition System</title>
+    <style>
+        :root {
+            --primary-green: #00d084;
+            --primary-green-hover: #00b871;
+            --primary-green-glow: rgba(0, 208, 132, 0.4);
+            --bg-dark: #0a0a0a;
+            --bg-card: #1a1a1a;
+            --bg-card-hover: #252525;
+            --text-primary: #f0f0f0;
+            --text-secondary: #a0a0a0;
+            --error-red: #ff4757;
+            --warning-yellow: #ffa502;
+            --info-blue: #3498db;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: var(--bg-dark);
+            color: var(--text-primary);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: flex-start;
+            gap: 20px;
+            padding: 24px 16px;
+            min-height: 100vh;
+            margin: 0;
+        }
+
+        h2 {
+            margin: 0;
+            font-size: 1.5rem;
+            font-weight: 600;
+            background: linear-gradient(135deg, var(--text-secondary), #fff);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        /* 设置区块 */
+        .settings-section {
+            background: var(--bg-card);
+            border-radius: 12px;
+            padding: 20px;
+            width: 100%;
+            max-width: 600px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .section-header {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 16px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .section-icon {
+            font-size: 20px;
+        }
+
+        .section-title {
+            font-size: 16px;
+            font-weight: 600;
+            margin: 0;
+        }
+
+        .section-subtitle {
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin: 0;
+        }
+
+        /* 设置项 */
+        .setting-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .setting-item:last-child {
+            border-bottom: none;
+        }
+
+        .setting-label {
+            flex: 1;
+        }
+
+        .setting-name {
+            font-size: 14px;
+            font-weight: 500;
+            margin-bottom: 2px;
+        }
+
+        .setting-desc {
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        .setting-control {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        /* 输入控件 */
+        input[type="number"],
+        input[type="text"],
+        select {
+            background: var(--bg-dark);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 6px;
+            padding: 8px 12px;
+            color: var(--text-primary);
+            font-size: 14px;
+            width: 100px;
+            text-align: center;
+        }
+
+        input[type="number"]:focus,
+        input[type="text"]:focus,
+        select:focus {
+            outline: none;
+            border-color: var(--primary-green);
+        }
+
+        select {
+            width: 140px;
+            cursor: pointer;
+        }
+
+        /* 滑块 */
+        .slider-container {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        input[type="range"] {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 120px;
+            height: 6px;
+            background: var(--bg-dark);
+            border-radius: 3px;
+            outline: none;
+        }
+
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 18px;
+            height: 18px;
+            background: var(--primary-green);
+            border-radius: 50%;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+
+        input[type="range"]::-webkit-slider-thumb:hover {
+            transform: scale(1.1);
+        }
+
+        .slider-value {
+            min-width: 50px;
+            text-align: center;
+            font-size: 14px;
+            color: var(--primary-green);
+            font-weight: 500;
+        }
+
+        /* 开关 */
+        .toggle-switch {
+            position: relative;
+            width: 48px;
+            height: 26px;
+        }
+
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .toggle-slider {
+            position: absolute;
+            cursor: pointer;
+            inset: 0;
+            background-color: var(--bg-dark);
+            border-radius: 26px;
+            transition: 0.3s;
+        }
+
+        .toggle-slider:before {
+            position: absolute;
+            content: "";
+            height: 20px;
+            width: 20px;
+            left: 3px;
+            bottom: 3px;
+            background-color: var(--text-secondary);
+            border-radius: 50%;
+            transition: 0.3s;
+        }
+
+        .toggle-switch input:checked+.toggle-slider {
+            background-color: var(--primary-green);
+        }
+
+        .toggle-switch input:checked+.toggle-slider:before {
+            transform: translateX(22px);
+            background-color: #fff;
+        }
+
+        /* 按钮 */
+        button {
+            padding: 10px 20px;
+            border-radius: 8px;
+            border: none;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: all 0.2s ease;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+        }
+
+        .btn-primary {
+            background: var(--primary-green);
+            color: #000;
+        }
+
+        .btn-primary:hover {
+            background: var(--primary-green-hover);
+            transform: translateY(-1px);
+        }
+
+        .btn-secondary {
+            background: var(--bg-card-hover);
+            color: var(--text-primary);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .btn-secondary:hover {
+            background: #333;
+        }
+
+        .btn-danger {
+            background: var(--error-red);
+            color: #fff;
+        }
+
+        .btn-danger:hover {
+            background: #ff6b7a;
+        }
+
+        .btn-sm {
+            padding: 6px 12px;
+            font-size: 12px;
+        }
+
+        /* 用户列表 */
+        .user-list {
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .user-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 8px;
+            background: var(--bg-dark);
+            transition: background 0.2s;
+        }
+
+        .user-item:hover {
+            background: var(--bg-card-hover);
+        }
+
+        .user-avatar {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, var(--primary-green), #00f5a0);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+            font-size: 16px;
+            color: #000;
+        }
+
+        .user-info {
+            flex: 1;
+        }
+
+        .user-name {
+            font-weight: 500;
+            font-size: 14px;
+        }
+
+        .user-meta {
+            font-size: 11px;
+            color: var(--text-secondary);
+        }
+
+        .user-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 40px;
+            color: var(--text-secondary);
+        }
+
+        .empty-state .icon {
+            font-size: 40px;
+            margin-bottom: 12px;
+            opacity: 0.5;
+        }
+
+        /* 导入导出区域 */
+        .import-export {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+
+        .file-upload {
+            display: none;
+        }
+
+        /* 状态标签 */
+        .status-badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 500;
+        }
+
+        .status-success {
+            background: rgba(0, 208, 132, 0.2);
+            color: var(--primary-green);
+        }
+
+        .status-warning {
+            background: rgba(255, 165, 2, 0.2);
+            color: var(--warning-yellow);
+        }
+
+        .status-error {
+            background: rgba(255, 71, 87, 0.2);
+            color: var(--error-red);
+        }
+
+        /* 统计卡片 */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+
+        .stat-card {
+            background: var(--bg-dark);
+            border-radius: 8px;
+            padding: 16px;
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 24px;
+            font-weight: 700;
+            color: var(--primary-green);
+        }
+
+        .stat-label {
+            font-size: 11px;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        /* 确认对话框 */
+        .modal {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.8);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.3s ease;
+        }
+
+        .modal.visible {
+            opacity: 1;
+            visibility: visible;
+        }
+
+        .modal-content {
+            background: var(--bg-card);
+            padding: 24px;
+            border-radius: 16px;
+            max-width: 400px;
+            text-align: center;
+        }
+
+        .modal-content h3 {
+            margin: 0 0 12px 0;
+        }
+
+        .modal-content p {
+            color: var(--text-secondary);
+            font-size: 14px;
+            margin: 0 0 20px 0;
+        }
+
+        .modal-actions {
+            display: flex;
+            gap: 12px;
+            justify-content: center;
+        }
+
+        /* 返回链接 */
+        .back-link {
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-size: 13px;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            margin-top: 20px;
+        }
+
+        .back-link:hover {
+            color: var(--text-primary);
+        }
+
+        /* Toast 通知 */
+        .toast {
+            position: fixed;
+            bottom: 24px;
+            left: 50%;
+            transform: translateX(-50%) translateY(100px);
+            background: var(--bg-card);
+            color: var(--text-primary);
+            padding: 12px 24px;
+            border-radius: 8px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+            transition: transform 0.3s ease;
+            z-index: 1001;
+        }
+
+        .toast.show {
+            transform: translateX(-50%) translateY(0);
+        }
+
+        .toast.success {
+            border-left: 3px solid var(--primary-green);
+        }
+
+        .toast.error {
+            border-left: 3px solid var(--error-red);
+        }
+    </style>
+
+    <!-- 我们的模块 -->
+    <script src="./js/core/FaceStorage.js"></script>
+</head>
+
+<body>
+    <h2>⚙️ Settings</h2>
+
+    <!-- 检测参数设置 -->
+    <div class="settings-section">
+        <div class="section-header">
+            <span class="section-icon">🎯</span>
+            <div>
+                <h3 class="section-title">Detection Parameters</h3>
+                <p class="section-subtitle">Configure face detection accuracy and performance</p>
+            </div>
+        </div>
+
+        <div class="setting-item">
+            <div class="setting-label">
+                <div class="setting-name">Input Size</div>
+                <div class="setting-desc">Larger = more accurate but slower</div>
+            </div>
+            <div class="setting-control">
+                <select id="inputSize">
+                    <option value="128">128 (Fast)</option>
+                    <option value="160">160</option>
+                    <option value="224">224</option>
+                    <option value="320" selected>320 (Default)</option>
+                    <option value="416">416</option>
+                    <option value="512">512 (Accurate)</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="setting-item">
+            <div class="setting-label">
+                <div class="setting-name">Score Threshold</div>
+                <div class="setting-desc">Minimum confidence to detect a face</div>
+            </div>
+            <div class="setting-control slider-container">
+                <input type="range" id="scoreThreshold" min="0.1" max="0.9" step="0.1" value="0.5">
+                <span class="slider-value" id="scoreThresholdValue">0.5</span>
+            </div>
+        </div>
+
+        <div class="setting-item">
+            <div class="setting-label">
+                <div class="setting-name">Match Threshold</div>
+                <div class="setting-desc">Maximum distance for face matching (lower = stricter)</div>
+            </div>
+            <div class="setting-control slider-container">
+                <input type="range" id="matchThreshold" min="0.3" max="0.8" step="0.05" value="0.6">
+                <span class="slider-value" id="matchThresholdValue">0.6</span>
+            </div>
+        </div>
+
+        <div class="setting-item">
+            <div class="setting-label">
+                <div class="setting-name">Show FPS</div>
+                <div class="setting-desc">Display performance info on screen</div>
+            </div>
+            <div class="setting-control">
+                <label class="toggle-switch">
+                    <input type="checkbox" id="showFPS" checked>
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+        </div>
+    </div>
+
+    <!-- 注册参数设置 -->
+    <div class="settings-section">
+        <div class="section-header">
+            <span class="section-icon">📝</span>
+            <div>
+                <h3 class="section-title">Registration Parameters</h3>
+                <p class="section-subtitle">Configure face registration behavior</p>
+            </div>
+        </div>
+
+        <div class="setting-item">
+            <div class="setting-label">
+                <div class="setting-name">Max Captures</div>
+                <div class="setting-desc">Number of face samples to collect</div>
+            </div>
+            <div class="setting-control">
+                <input type="number" id="maxCaptures" min="5" max="50" value="20">
+            </div>
+        </div>
+
+        <div class="setting-item">
+            <div class="setting-label">
+                <div class="setting-name">Capture Interval</div>
+                <div class="setting-desc">Milliseconds between captures</div>
+            </div>
+            <div class="setting-control">
+                <input type="number" id="captureInterval" min="200" max="2000" step="100" value="600">
+                <span style="color: var(--text-secondary); font-size: 12px;">ms</span>
+            </div>
+        </div>
+
+        <div class="setting-item">
+            <div class="setting-label">
+                <div class="setting-name">Auto Save Progress</div>
+                <div class="setting-desc">Save registration progress to IndexedDB</div>
+            </div>
+            <div class="setting-control">
+                <label class="toggle-switch">
+                    <input type="checkbox" id="autoSaveProgress" checked>
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+        </div>
+    </div>
+
+    <!-- 用户管理 -->
+    <div class="settings-section">
+        <div class="section-header">
+            <span class="section-icon">👥</span>
+            <div>
+                <h3 class="section-title">Registered Users</h3>
+                <p class="section-subtitle">Manage users stored in IndexedDB</p>
+            </div>
+        </div>
+
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-value" id="statUserCount">0</div>
+                <div class="stat-label">Users</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="statDescriptorCount">0</div>
+                <div class="stat-label">Descriptors</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="statStorageSize">0 KB</div>
+                <div class="stat-label">Storage</div>
+            </div>
+        </div>
+
+        <div id="userList" class="user-list">
+            <div class="empty-state">
+                <div class="icon">👤</div>
+                <div>No registered users</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 数据导入导出 -->
+    <div class="settings-section">
+        <div class="section-header">
+            <span class="section-icon">💾</span>
+            <div>
+                <h3 class="section-title">Data Management</h3>
+                <p class="section-subtitle">Import, export, or clear face database</p>
+            </div>
+        </div>
+
+        <div class="import-export">
+            <button class="btn-primary" onclick="exportData()">
+                📥 Export All Users
+            </button>
+            <button class="btn-secondary" onclick="document.getElementById('importFile').click()">
+                📤 Import JSON
+            </button>
+            <button class="btn-danger" onclick="confirmClearAll()">
+                🗑️ Clear All Data
+            </button>
+        </div>
+        <input type="file" id="importFile" class="file-upload" accept=".json" onchange="importData(event)">
+    </div>
+
+    <!-- 保存按钮 -->
+    <div style="display: flex; gap: 12px;">
+        <button class="btn-primary" onclick="saveSettings()">
+            💾 Save Settings
+        </button>
+        <button class="btn-secondary" onclick="resetSettings()">
+            🔄 Reset to Default
+        </button>
+    </div>
+
+    <a href="home.html" class="back-link">← Back to Home</a>
+
+    <!-- 确认对话框 -->
+    <div id="confirmModal" class="modal">
+        <div class="modal-content">
+            <h3 id="confirmTitle">Confirm Action</h3>
+            <p id="confirmMessage">Are you sure you want to proceed?</p>
+            <div class="modal-actions">
+                <button class="btn-secondary" onclick="hideModal()">Cancel</button>
+                <button class="btn-danger" id="confirmBtn" onclick="confirmAction()">Confirm</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast 通知 -->
+    <div id="toast" class="toast"></div>
+
+    <script>
+        // ========== Settings Storage Key ==========
+        const SETTINGS_KEY = 'faceRecognitionSettings';
+
+        // ========== Default Settings ==========
+        const DEFAULT_SETTINGS = {
+            detection: {
+                inputSize: 320,
+                scoreThreshold: 0.5,
+            },
+            matching: {
+                matchThreshold: 0.6,
+            },
+            registration: {
+                maxCaptures: 20,
+                captureInterval: 600,
+                autoSaveProgress: true,
+            },
+            performance: {
+                showFPS: true,
+            }
+        };
+
+        // ========== State ==========
+        let currentSettings = { ...DEFAULT_SETTINGS };
+        let pendingAction = null;
+
+        // ========== DOM Elements ==========
+        const inputSize = document.getElementById('inputSize');
+        const scoreThreshold = document.getElementById('scoreThreshold');
+        const scoreThresholdValue = document.getElementById('scoreThresholdValue');
+        const matchThreshold = document.getElementById('matchThreshold');
+        const matchThresholdValue = document.getElementById('matchThresholdValue');
+        const showFPS = document.getElementById('showFPS');
+        const maxCaptures = document.getElementById('maxCaptures');
+        const captureInterval = document.getElementById('captureInterval');
+        const autoSaveProgress = document.getElementById('autoSaveProgress');
+        const userListEl = document.getElementById('userList');
+        const confirmModal = document.getElementById('confirmModal');
+        const toast = document.getElementById('toast');
+
+        // ========== Initialize ==========
+        async function init() {
+            // Load settings
+            loadSettings();
+            updateUI();
+
+            // Initialize storage and load users
+            await faceStorage.init();
+            await loadUsers();
+
+            // Setup event listeners
+            setupEventListeners();
+        }
+
+        function setupEventListeners() {
+            // Slider value updates
+            scoreThreshold.addEventListener('input', () => {
+                scoreThresholdValue.textContent = scoreThreshold.value;
+            });
+
+            matchThreshold.addEventListener('input', () => {
+                matchThresholdValue.textContent = matchThreshold.value;
+            });
+        }
+
+        // ========== Settings Management ==========
+        function loadSettings() {
+            try {
+                const saved = localStorage.getItem(SETTINGS_KEY);
+                if (saved) {
+                    currentSettings = JSON.parse(saved);
+                }
+            } catch (e) {
+                console.warn('Failed to load settings:', e);
+            }
+        }
+
+        function saveSettings() {
+            // Gather values from UI
+            currentSettings = {
+                detection: {
+                    inputSize: parseInt(inputSize.value),
+                    scoreThreshold: parseFloat(scoreThreshold.value),
+                },
+                matching: {
+                    matchThreshold: parseFloat(matchThreshold.value),
+                },
+                registration: {
+                    maxCaptures: parseInt(maxCaptures.value),
+                    captureInterval: parseInt(captureInterval.value),
+                    autoSaveProgress: autoSaveProgress.checked,
+                },
+                performance: {
+                    showFPS: showFPS.checked,
+                }
+            };
+
+            // Save to localStorage
+            localStorage.setItem(SETTINGS_KEY, JSON.stringify(currentSettings));
+            showToast('Settings saved successfully!', 'success');
+        }
+
+        function resetSettings() {
+            currentSettings = { ...DEFAULT_SETTINGS };
+            localStorage.removeItem(SETTINGS_KEY);
+            updateUI();
+            showToast('Settings reset to default', 'success');
+        }
+
+        function updateUI() {
+            inputSize.value = currentSettings.detection.inputSize;
+            scoreThreshold.value = currentSettings.detection.scoreThreshold;
+            scoreThresholdValue.textContent = currentSettings.detection.scoreThreshold;
+            matchThreshold.value = currentSettings.matching.matchThreshold;
+            matchThresholdValue.textContent = currentSettings.matching.matchThreshold;
+            showFPS.checked = currentSettings.performance.showFPS;
+            maxCaptures.value = currentSettings.registration.maxCaptures;
+            captureInterval.value = currentSettings.registration.captureInterval;
+            autoSaveProgress.checked = currentSettings.registration.autoSaveProgress;
+        }
+
+        // ========== User Management ==========
+        async function loadUsers() {
+            try {
+                const users = await faceStorage.getAllUsers();
+                renderUserList(users);
+                updateStats(users);
+            } catch (e) {
+                console.error('Failed to load users:', e);
+            }
+        }
+
+        function renderUserList(users) {
+            if (users.length === 0) {
+                userListEl.innerHTML = `
+                    <div class="empty-state">
+                        <div class="icon">👤</div>
+                        <div>No registered users</div>
+                    </div>
+                `;
+                return;
+            }
+
+            userListEl.innerHTML = users.map(user => {
+                const initial = (user.name || user.userId || '?').charAt(0).toUpperCase();
+                const descriptorCount = user.descriptors ? user.descriptors.length : 0;
+                const date = user.registeredAt ? new Date(user.registeredAt).toLocaleDateString() : 'Unknown';
+
+                return `
+                    <div class="user-item" data-user-id="${user.userId}">
+                        <div class="user-avatar">${initial}</div>
+                        <div class="user-info">
+                            <div class="user-name">${user.name || user.userId}</div>
+                            <div class="user-meta">ID: ${user.userId} • ${descriptorCount} descriptors • ${date}</div>
+                        </div>
+                        <div class="user-actions">
+                            <button class="btn-secondary btn-sm" onclick="exportUser('${user.userId}')">📥</button>
+                            <button class="btn-danger btn-sm" onclick="confirmDeleteUser('${user.userId}')">🗑️</button>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function updateStats(users) {
+            const userCount = users.length;
+            let descriptorCount = 0;
+            let estimatedSize = 0;
+
+            users.forEach(user => {
+                const count = user.descriptors ? user.descriptors.length : 0;
+                descriptorCount += count;
+                // Estimate: 128 floats * 4 bytes * descriptor count
+                estimatedSize += count * 128 * 4;
+            });
+
+            document.getElementById('statUserCount').textContent = userCount;
+            document.getElementById('statDescriptorCount').textContent = descriptorCount;
+            document.getElementById('statStorageSize').textContent = formatBytes(estimatedSize);
+        }
+
+        function formatBytes(bytes) {
+            if (bytes === 0) return '0 B';
+            const k = 1024;
+            const sizes = ['B', 'KB', 'MB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+        }
+
+        async function deleteUser(userId) {
+            try {
+                await faceStorage.deleteUser(userId);
+                await loadUsers();
+                showToast(`User "${userId}" deleted`, 'success');
+            } catch (e) {
+                showToast('Failed to delete user: ' + e.message, 'error');
+            }
+        }
+
+        // ========== Import/Export ==========
+        async function exportData() {
+            try {
+                const filename = `face_database_${Date.now()}.json`;
+                await faceStorage.downloadJSON(filename);
+                showToast('Database exported successfully!', 'success');
+            } catch (e) {
+                showToast('Export failed: ' + e.message, 'error');
+            }
+        }
+
+        async function exportUser(userId) {
+            try {
+                const user = await faceStorage.getUser(userId);
+                if (!user) {
+                    showToast('User not found', 'error');
+                    return;
+                }
+
+                const data = [{
+                    id: user.userId,
+                    name: user.name,
+                    descriptors: user.descriptors.map(d => Array.from(d)),
+                    meanDescriptor: user.meanDescriptor ? Array.from(user.meanDescriptor) : null,
+                    registeredAt: user.registeredAt
+                }];
+
+                const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = `face_${userId}_${Date.now()}.json`;
+                link.click();
+                URL.revokeObjectURL(url);
+
+                showToast(`User "${userId}" exported`, 'success');
+            } catch (e) {
+                showToast('Export failed: ' + e.message, 'error');
+            }
+        }
+
+        async function importData(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            try {
+                const result = await faceStorage.importFromJSON(await file.text());
+
+                if (result.success) {
+                    await loadUsers();
+                    showToast(`Imported ${result.count} users successfully!`, 'success');
+                } else {
+                    showToast('Import failed: ' + result.error, 'error');
+                }
+            } catch (e) {
+                showToast('Import failed: ' + e.message, 'error');
+            }
+
+            event.target.value = ''; // Reset file input
+        }
+
+        async function clearAllData() {
+            try {
+                const users = await faceStorage.getAllUsers();
+                for (const user of users) {
+                    await faceStorage.deleteUser(user.userId);
+                }
+                await faceStorage.clearProgress();
+                await loadUsers();
+                showToast('All data cleared', 'success');
+            } catch (e) {
+                showToast('Failed to clear data: ' + e.message, 'error');
+            }
+        }
+
+        // ========== Modal ==========
+        function showModal(title, message, action) {
+            document.getElementById('confirmTitle').textContent = title;
+            document.getElementById('confirmMessage').textContent = message;
+            pendingAction = action;
+            confirmModal.classList.add('visible');
+        }
+
+        function hideModal() {
+            confirmModal.classList.remove('visible');
+            pendingAction = null;
+        }
+
+        function confirmAction() {
+            if (pendingAction) {
+                pendingAction();
+            }
+            hideModal();
+        }
+
+        function confirmDeleteUser(userId) {
+            showModal(
+                'Delete User',
+                `Are you sure you want to delete user "${userId}"? This cannot be undone.`,
+                () => deleteUser(userId)
+            );
+        }
+
+        function confirmClearAll() {
+            showModal(
+                '⚠️ Clear All Data',
+                'This will permanently delete all registered users. This action cannot be undone!',
+                clearAllData
+            );
+        }
+
+        // ========== Toast ==========
+        function showToast(message, type = 'success') {
+            toast.textContent = message;
+            toast.className = `toast ${type} show`;
+
+            setTimeout(() => {
+                toast.classList.remove('show');
+            }, 3000);
+        }
+
+        // ========== Init on Load ==========
+        window.addEventListener('load', init);
+    </script>
+</body>
+
+</html>
