@@ -104,25 +104,6 @@ class FaceMatcher {
     }
 
     /**
-     * 直接从数据数组加载用户数据（Ad-hoc 模式）
-     * @param {Array} usersArray - 格式为 [{ id, name, descriptors }] 的数组
-     */
-    loadFromData(usersArray) {
-        try {
-            if (!Array.isArray(usersArray)) {
-                throw new Error('Invalid format: expected array');
-            }
-
-            this._processUsers(usersArray);
-            console.log(`FaceMatcher: Loaded ${this.registeredUsers.length} users from data`);
-            return { success: true, count: this.registeredUsers.length };
-        } catch (error) {
-            console.error('FaceMatcher: Failed to load from data', error);
-            return { success: false, error: error.message };
-        }
-    }
-
-    /**
      * 处理用户数据，构建匹配索引
      */
     _processUsers(users) {

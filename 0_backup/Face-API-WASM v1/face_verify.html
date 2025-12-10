@@ -480,30 +480,25 @@
     <a href="home.html" class="back-link">← Back to Home</a>
 
     <script>
-        // ========== Load Settings from localStorage ==========
-        const SETTINGS_KEY = 'faceRecognitionSettings';
-        const savedSettings = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
-
+        // ========== Configuration ==========
         const CONFIG = {
             modelUrl: 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model',
 
             detection: {
-                inputSize: savedSettings.detection?.inputSize || 320,
-                scoreThreshold: savedSettings.detection?.scoreThreshold || 0.5,
+                inputSize: 320,
+                scoreThreshold: 0.5,
             },
 
             matching: {
-                matchThreshold: savedSettings.matching?.matchThreshold || 0.6,
-                highConfidenceThreshold: savedSettings.matching?.highConfidenceThreshold || 0.4,
+                matchThreshold: 0.6,        // 距离 < 0.6 认为匹配
+                highConfidenceThreshold: 0.4, // 距离 < 0.4 高置信度
             },
 
             performance: {
                 logTiming: true,
-                showFPS: savedSettings.performance?.showFPS !== false,
+                showFPS: true,
             }
         };
-
-        console.log('📋 Loaded CONFIG from settings:', CONFIG);
 
         // ========== DOM Elements ==========
         const controlPanel = document.getElementById('controlPanel');
