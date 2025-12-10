@@ -578,50 +578,68 @@
                 verifySpinner.classList.remove('hidden');
                 setVerifyStatus('Loading models...');
 
-                console.log('🚀 Initializing Face API...');
+                console.log('🚀 Starting Face API initialization...');
                 const initStart = performance.now();
 
                 // Setup WASM backend
+                const backendStart = performance.now();
                 const wasmPath = './js/lib/';
+                let backendUsed = 'unknown';
+
                 if (typeof tf !== 'undefined' && tf.wasm && tf.wasm.setWasmPaths) {
                     tf.wasm.setWasmPaths(wasmPath);
                     await tf.setBackend('wasm');
                     await tf.ready();
-                    console.log('⏱️ WASM backend ready');
+                    backendUsed = 'wasm';
+                    console.log('✅ WASM backend ready:', tf.getBackend());
                 } else {
                     await faceapi.tf.setBackend('webgl');
                     await faceapi.tf.ready();
-                    console.log('⏱️ WebGL backend ready');
+                    backendUsed = 'webgl';
+                    console.log('✅ WebGL backend ready:', faceapi.tf.getBackend());
                 }
+
+                const backendEnd = performance.now();
+                console.log(`⏱️ Backend setup (${backendUsed}): ${(backendEnd - backendStart).toFixed(0)}ms`);
 
                 // Load models based on selected detector
                 setVerifyStatus('Loading models...');
+                const modelsStart = performance.now();
                 const detectorModel = CONFIG.detection.detectorModel;
                 console.log(`🔧 Using detector model: ${detectorModel}`);
 
                 if (detectorModel === 'ssd') {
-                    await Promise.all([
-                        faceapi.nets.ssdMobilenetv1.loadFromUri(CONFIG.modelUrl),
-                        faceapi.nets.faceLandmark68Net.loadFromUri(CONFIG.modelUrl),
-                        faceapi.nets.faceRecognitionNet.loadFromUri(CONFIG.modelUrl),
-                    ]);
+                    await faceapi.nets.ssdMobilenetv1.loadFromUri(CONFIG.modelUrl);
+                    console.log('  📦 SSD Mobilenet V1 loaded');
+                    await faceapi.nets.faceLandmark68Net.loadFromUri(CONFIG.modelUrl);
+                    console.log('  📦 FaceLandmark68Net loaded');
+                    await faceapi.nets.faceRecognitionNet.loadFromUri(CONFIG.modelUrl);
+                    console.log('  📦 FaceRecognitionNet loaded');
                 } else if (detectorModel === 'mtcnn') {
-                    await Promise.all([
-                        faceapi.nets.mtcnn.loadFromUri(CONFIG.modelUrl),
-                        faceapi.nets.faceLandmark68Net.loadFromUri(CONFIG.modelUrl),
-                        faceapi.nets.faceRecognitionNet.loadFromUri(CONFIG.modelUrl),
-                    ]);
+                    await faceapi.nets.mtcnn.loadFromUri(CONFIG.modelUrl);
+                    console.log('  📦 MTCNN loaded');
+                    await faceapi.nets.faceLandmark68Net.loadFromUri(CONFIG.modelUrl);
+                    console.log('  📦 FaceLandmark68Net loaded');
+                    await faceapi.nets.faceRecognitionNet.loadFromUri(CONFIG.modelUrl);
+                    console.log('  📦 FaceRecognitionNet loaded');
                 } else {
-                    await Promise.all([
-                        faceapi.nets.tinyFaceDetector.loadFromUri(CONFIG.modelUrl),
-                        faceapi.nets.faceLandmark68Net.loadFromUri(CONFIG.modelUrl),
-                        faceapi.nets.faceRecognitionNet.loadFromUri(CONFIG.modelUrl),
-                    ]);
+                    await faceapi.nets.tinyFaceDetector.loadFromUri(CONFIG.modelUrl);
+                    console.log('  📦 TinyFaceDetector loaded');
+                    await faceapi.nets.faceLandmark68Net.loadFromUri(CONFIG.modelUrl);
+                    console.log('  📦 FaceLandmark68Net loaded');
+                    await faceapi.nets.faceRecognitionNet.loadFromUri(CONFIG.modelUrl);
+                    console.log('  📦 FaceRecognitionNet loaded');
                 }
+
+                const modelsEnd = performance.now();
+                console.log(`⏱️ Models loading: ${(modelsEnd - modelsStart).toFixed(0)}ms`);
 
                 // Warm-up
                 setVerifyStatus('Warming up...');
+                const warmupStart = performance.now();
                 await warmupOnce();
+                const warmupEnd = performance.now();
+                console.log(`⏱️ Warm-up: ${(warmupEnd - warmupStart).toFixed(0)}ms`);
 
                 // Initialize matcher
                 faceMatcher = new FaceMatcher({
@@ -630,7 +648,9 @@
                 });
 
                 const totalTime = performance.now() - initStart;
-                console.log(`✅ Face API ready in ${totalTime.toFixed(0)}ms`);
+                console.log('────────────────────────────────');
+                console.log(`🚀 Total initialization time: ${totalTime.toFixed(0)}ms`);
+                console.log('────────────────────────────────');
 
                 faceApiReady = true;
                 verifySpinner.classList.add('hidden');
