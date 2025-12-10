@@ -553,6 +553,7 @@
             modelUrl: 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model',
 
             detection: {
+                detectorModel: savedSettings.detection?.detectorModel || 'tiny',
                 inputSize: savedSettings.detection?.inputSize || 320,
                 scoreThreshold: savedSettings.detection?.scoreThreshold || 0.5,
             },
@@ -747,13 +748,24 @@
                     console.log('⏱️ WebGL backend ready');
                 }
 
-                // Load models
+                // Load models based on selected detector
                 setStatus('Loading models...');
-                await Promise.all([
-                    faceapi.nets.tinyFaceDetector.loadFromUri(CONFIG.modelUrl),
-                    faceapi.nets.faceLandmark68Net.loadFromUri(CONFIG.modelUrl),
-                    faceapi.nets.faceRecognitionNet.loadFromUri(CONFIG.modelUrl),
-                ]);
+                const detectorModel = CONFIG.detection.detectorModel;
+                console.log(`🔧 Using detector model: ${detectorModel}`);
+
+                if (detectorModel === 'ssd') {
+                    await Promise.all([
+                        faceapi.nets.ssdMobilenetv1.loadFromUri(CONFIG.modelUrl),
+                        faceapi.nets.faceLandmark68Net.loadFromUri(CONFIG.modelUrl),
+                        faceapi.nets.faceRecognitionNet.loadFromUri(CONFIG.modelUrl),
+                    ]);
+                } else {
+                    await Promise.all([
+                        faceapi.nets.tinyFaceDetector.loadFromUri(CONFIG.modelUrl),
+                        faceapi.nets.faceLandmark68Net.loadFromUri(CONFIG.modelUrl),
+                        faceapi.nets.faceRecognitionNet.loadFromUri(CONFIG.modelUrl),
+                    ]);
+                }
 
                 // Warm-up
                 setStatus('Warming up...');
@@ -789,7 +801,12 @@
             const ctx = dummy.getContext('2d');
             ctx.fillStyle = 'black';
             ctx.fillRect(0, 0, dummy.width, dummy.height);
-            await faceapi.detectAllFaces(dummy, new faceapi.TinyFaceDetectorOptions());
+
+            if (CONFIG.detection.detectorModel === 'ssd') {
+                await faceapi.detectAllFaces(dummy, new faceapi.SsdMobilenetv1Options());
+            } else {
+                await faceapi.detectAllFaces(dummy, new faceapi.TinyFaceDetectorOptions());
+            }
         }
 
         // ========== Multi-Image Processing ==========
@@ -820,6 +837,268 @@
             }
         }
 
+        // ========== Image Preprocessing Utilities ==========
+
+        /**
+         * 对比度增强 - 简单的直方图拉伸
+         * 提高暗部和背光图片的人脸检出率
+         */
+        function enhanceContrast(canvas, factor = 1.3) {
+            const ctx = canvas.getContext('2d');
+            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            const data = imageData.data;
+
+            // 计算平均亮度
+            let sum = 0;
+            for (let i = 0; i < data.length; i += 4) {
+                sum += (data[i] + data[i + 1] + data[i + 2]) / 3;
+            }
+            const avg = sum / (data.length / 4);
+
+            // 调整对比度
+            for (let i = 0; i < data.length; i += 4) {
+                data[i] = Math.min(255, Math.max(0, factor * (data[i] - avg) + avg));     // R
+                data[i + 1] = Math.min(255, Math.max(0, factor * (data[i + 1] - avg) + avg)); // G
+                data[i + 2] = Math.min(255, Math.max(0, factor * (data[i + 2] - avg) + avg)); // B
+            }
+
+            ctx.putImageData(imageData, 0, 0);
+            return canvas;
+        }
+
+        /**
+         * 创建缩放后的 canvas
+         */
+        function createScaledCanvas(sourceImg, scale) {
+            const canvas = document.createElement('canvas');
+            canvas.width = Math.round(sourceImg.naturalWidth * scale);
+            canvas.height = Math.round(sourceImg.naturalHeight * scale);
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(sourceImg, 0, 0, canvas.width, canvas.height);
+            return canvas;
+        }
+
+        /**
+         * 亮度调整 - 提亮过暗的图片
+         */
+        function adjustBrightness(canvas, amount = 30) {
+            const ctx = canvas.getContext('2d');
+            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            const data = imageData.data;
+
+            for (let i = 0; i < data.length; i += 4) {
+                data[i] = Math.min(255, Math.max(0, data[i] + amount));     // R
+                data[i + 1] = Math.min(255, Math.max(0, data[i + 1] + amount)); // G
+                data[i + 2] = Math.min(255, Math.max(0, data[i + 2] + amount)); // B
+            }
+
+            ctx.putImageData(imageData, 0, 0);
+            return canvas;
+        }
+
+        /**
+         * 锐化 - 增强边缘细节，适合轻微模糊的图片
+         * 使用 3x3 锐化卷积核
+         */
+        function sharpen(canvas) {
+            const ctx = canvas.getContext('2d');
+            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            const data = imageData.data;
+            const width = canvas.width;
+            const height = canvas.height;
+
+            // 锐化卷积核
+            const kernel = [
+                0, -1, 0,
+                -1, 5, -1,
+                0, -1, 0
+            ];
+
+            const output = new Uint8ClampedArray(data.length);
+
+            for (let y = 1; y < height - 1; y++) {
+                for (let x = 1; x < width - 1; x++) {
+                    for (let c = 0; c < 3; c++) { // RGB channels
+                        let sum = 0;
+                        for (let ky = -1; ky <= 1; ky++) {
+                            for (let kx = -1; kx <= 1; kx++) {
+                                const idx = ((y + ky) * width + (x + kx)) * 4 + c;
+                                sum += data[idx] * kernel[(ky + 1) * 3 + (kx + 1)];
+                            }
+                        }
+                        const outIdx = (y * width + x) * 4 + c;
+                        output[outIdx] = Math.min(255, Math.max(0, sum));
+                    }
+                    output[(y * width + x) * 4 + 3] = 255; // Alpha
+                }
+            }
+
+            // Copy edge pixels
+            for (let i = 0; i < data.length; i++) {
+                if (output[i] === 0 && i % 4 !== 3) {
+                    output[i] = data[i];
+                }
+            }
+
+            ctx.putImageData(new ImageData(output, width, height), 0, 0);
+            return canvas;
+        }
+
+        /**
+         * 灰度转换 - 去除颜色干扰
+         */
+        function convertToGrayscale(canvas) {
+            const ctx = canvas.getContext('2d');
+            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            const data = imageData.data;
+
+            for (let i = 0; i < data.length; i += 4) {
+                const gray = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+                data[i] = gray;     // R
+                data[i + 1] = gray; // G
+                data[i + 2] = gray; // B
+            }
+
+            ctx.putImageData(imageData, 0, 0);
+            return canvas;
+        }
+
+        /**
+         * 应用预处理 - 根据类型应用不同的处理
+         */
+        function applyPreprocessing(canvas, type) {
+            switch (type) {
+                case 'contrast':
+                    return enhanceContrast(canvas, 1.4);
+                case 'brighten':
+                    return adjustBrightness(canvas, 40);
+                case 'sharpen':
+                    return sharpen(canvas);
+                case 'grayscale':
+                    return convertToGrayscale(canvas);
+                case 'contrast+brighten':
+                    enhanceContrast(canvas, 1.3);
+                    return adjustBrightness(canvas, 25);
+                default:
+                    return canvas;
+            }
+        }
+
+        /**
+         * 单次人脸检测
+         */
+        async function detectFaceOnce(input) {
+            if (CONFIG.detection.detectorModel === 'ssd') {
+                const options = new faceapi.SsdMobilenetv1Options({
+                    minConfidence: CONFIG.detection.scoreThreshold
+                });
+                return await faceapi
+                    .detectSingleFace(input, options)
+                    .withFaceLandmarks()
+                    .withFaceDescriptor();
+            } else {
+                const options = new faceapi.TinyFaceDetectorOptions({
+                    inputSize: CONFIG.detection.inputSize,
+                    scoreThreshold: CONFIG.detection.scoreThreshold
+                });
+                return await faceapi
+                    .detectSingleFace(input, options)
+                    .withFaceLandmarks()
+                    .withFaceDescriptor();
+            }
+        }
+
+        /**
+         * 多尺度重试检测 + 匹配优化
+         * 策略：尝试所有尺度和预处理，返回最佳匹配结果
+         * 不仅在检测失败时重试，匹配失败时也会尝试其他方式
+         */
+        async function detectWithMultiScale(img) {
+            const attempts = [
+                { scale: 1.0, preprocess: null, label: '1x' },
+                { scale: 1.5, preprocess: null, label: '1.5x' },
+                { scale: 2.0, preprocess: null, label: '2.0x' },
+                { scale: 0.5, preprocess: null, label: '0.5x' },
+                { scale: 1.0, preprocess: 'contrast', label: 'contrast' },
+                { scale: 1.0, preprocess: 'brighten', label: 'brighten' },
+                { scale: 1.0, preprocess: 'sharpen', label: 'sharpen' },
+                { scale: 1.0, preprocess: 'grayscale', label: 'grayscale' },
+                { scale: 1.5, preprocess: 'contrast', label: '1.5x+contrast' },
+            ];
+
+            let bestResult = null;
+            let bestDistance = Infinity;
+            let bestDetection = null;
+            let bestAttempt = null;
+
+            for (const attempt of attempts) {
+                let input = img;
+
+                // 创建缩放或预处理后的输入
+                if (attempt.scale !== 1.0 || attempt.preprocess) {
+                    input = createScaledCanvas(img, attempt.scale);
+                    if (attempt.preprocess) {
+                        applyPreprocessing(input, attempt.preprocess);
+                    }
+                    console.log(`🔄 Trying: ${attempt.label}`);
+                }
+
+                const detection = await detectFaceOnce(input);
+
+                if (detection) {
+                    // 转换边界框坐标回原始尺寸
+                    if (attempt.scale !== 1.0) {
+                        const box = detection.detection.box;
+                        detection.detection._box = new faceapi.Box({
+                            x: box.x / attempt.scale,
+                            y: box.y / attempt.scale,
+                            width: box.width / attempt.scale,
+                            height: box.height / attempt.scale
+                        });
+                    }
+
+                    // 尝试匹配
+                    const matchResult = faceMatcher.findBestMatch(detection.descriptor);
+                    const distance = matchResult.distance;
+
+                    console.log(`📊 ${attempt.label}: distance=${distance.toFixed(4)}, matched=${matchResult.status === 'matched'}`);
+
+                    // 如果匹配成功，立即返回
+                    if (matchResult.status === 'matched') {
+                        console.log(`✅ Match found at ${attempt.label}!`);
+                        return {
+                            detection,
+                            scale: attempt.scale,
+                            preprocess: attempt.preprocess,
+                            matchResult
+                        };
+                    }
+
+                    // 记录最佳结果（距离最短的）
+                    if (distance < bestDistance) {
+                        bestDistance = distance;
+                        bestDetection = detection;
+                        bestAttempt = attempt;
+                        bestResult = matchResult;
+                    }
+                }
+            }
+
+            // 如果没有成功匹配，返回距离最短的检测结果
+            if (bestDetection) {
+                console.log(`⚠️ No match, returning best attempt: ${bestAttempt.label} (distance=${bestDistance.toFixed(4)})`);
+                return {
+                    detection: bestDetection,
+                    scale: bestAttempt.scale,
+                    preprocess: bestAttempt.preprocess,
+                    matchResult: bestResult
+                };
+            }
+
+            console.log(`❌ No face detected after all attempts`);
+            return { detection: null, scale: 1.0, preprocess: null, matchResult: null };
+        }
+
         async function processImageCard(file, card) {
             const img = card.querySelector('img');
             const canvas = card.querySelector('canvas');
@@ -840,15 +1119,8 @@
                         canvas.height = img.naturalHeight;
 
                         try {
-                            const options = new faceapi.TinyFaceDetectorOptions({
-                                inputSize: CONFIG.detection.inputSize,
-                                scoreThreshold: CONFIG.detection.scoreThreshold
-                            });
-
-                            const detection = await faceapi
-                                .detectSingleFace(img, options)
-                                .withFaceLandmarks()
-                                .withFaceDescriptor();
+                            // 使用多尺度重试检测 + 匹配
+                            const { detection, scale, preprocess, matchResult } = await detectWithMultiScale(img);
 
                             // Hide loading, show result
                             loadingOverlay.style.display = 'none';
@@ -861,25 +1133,42 @@
                                 resultConfidence.textContent = 'Face not detected';
                                 processedCount.unknown++;
                             } else {
-                                // Draw bounding box
+                                // Draw bounding box (使用原始尺寸的坐标)
                                 const box = detection.detection.box;
-                                ctx.strokeStyle = '#9b59b6';
+                                // 预处理用橙色，缩放用紫色，原图用默认紫色
+                                const color = preprocess ? '#f39c12' : '#9b59b6';
+                                ctx.strokeStyle = color;
                                 ctx.lineWidth = 3;
                                 ctx.strokeRect(box.x, box.y, box.width, box.height);
 
-                                // Match face
-                                const result = faceMatcher.findBestMatch(detection.descriptor);
+                                // 如果使用了特殊处理，显示标记
+                                if (scale !== 1.0 || preprocess) {
+                                    ctx.font = '12px sans-serif';
+                                    ctx.fillStyle = color;
+                                    let label = '';
+                                    if (scale !== 1.0 && preprocess) {
+                                        label = `🔍 ${scale}x + 🎨 ${preprocess}`;
+                                    } else if (scale !== 1.0) {
+                                        label = `🔍 ${scale}x`;
+                                    } else {
+                                        label = `🎨 ${preprocess}`;
+                                    }
+                                    ctx.fillText(label, box.x, box.y - 5);
+                                }
 
-                                if (result.status === 'matched') {
+                                // 使用已经计算好的匹配结果
+                                if (matchResult && matchResult.status === 'matched') {
                                     card.classList.add('matched');
-                                    resultName.textContent = `✓ ${result.user.name}`;
-                                    resultConfidence.textContent = `${result.confidence.toFixed(1)}%`;
-                                    markUserVerified(result.user.id);
+                                    resultName.textContent = `✓ ${matchResult.user.name}`;
+                                    resultConfidence.textContent = `${matchResult.confidence.toFixed(1)}%`;
+                                    markUserVerified(matchResult.user.id);
                                     processedCount.matched++;
                                 } else {
                                     card.classList.add('no-match');
                                     resultName.textContent = 'Unknown';
-                                    resultConfidence.textContent = 'No match';
+                                    // 显示最佳距离作为参考
+                                    const distInfo = matchResult ? `Distance: ${matchResult.distance.toFixed(3)}` : 'No match';
+                                    resultConfidence.textContent = distInfo;
                                     processedCount.unknown++;
                                 }
                             }

@@ -205,6 +205,9 @@ class FaceMatcher {
         this.stats.lastMatchTime = matchTime;
         this.stats.totalMatches++;
 
+        // Debug: 输出匹配信息
+        console.log(`🔍 Match Debug: distance=${bestDistance.toFixed(4)}, threshold=${this.config.matchThreshold}, willMatch=${bestDistance < this.config.matchThreshold}`);
+
         // 判断是否匹配
         if (bestDistance < this.config.matchThreshold && bestUserIndex >= 0) {
             const user = this.registeredUsers[bestUserIndex];
@@ -291,10 +294,12 @@ class FaceMatcher {
     /**
      * 将距离转换为置信度百分比
      * 距离越小，置信度越高
+     * 使用固定基准：distance=0 → 100%, distance=0.6 → 50%, distance=1.2 → 0%
      */
     _distanceToConfidence(distance) {
-        // 使用指数衰减：distance=0 → 100%, distance=threshold → ~37%
-        const confidence = Math.exp(-distance / this.config.matchThreshold) * 100;
+        // 使用线性公式，基准值固定不受阈值影响
+        // distance=0 → 100%, distance=0.6 → 50%, distance=1.2 → 0%
+        const confidence = (1 - distance / 1.2) * 100;
         return Math.min(100, Math.max(0, confidence));
     }
 

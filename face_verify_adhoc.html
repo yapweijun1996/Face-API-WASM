@@ -483,6 +483,7 @@
         const CONFIG = {
             modelUrl: 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model',
             detection: {
+                detectorModel: savedSettings.detection?.detectorModel || 'tiny',
                 inputSize: savedSettings.detection?.inputSize || 320,
                 scoreThreshold: savedSettings.detection?.scoreThreshold || 0.5,
             },
@@ -593,12 +594,30 @@
                     console.log('⏱️ WebGL backend ready');
                 }
 
-                // Load models
-                await Promise.all([
-                    faceapi.nets.tinyFaceDetector.loadFromUri(CONFIG.modelUrl),
-                    faceapi.nets.faceLandmark68Net.loadFromUri(CONFIG.modelUrl),
-                    faceapi.nets.faceRecognitionNet.loadFromUri(CONFIG.modelUrl),
-                ]);
+                // Load models based on selected detector
+                setVerifyStatus('Loading models...');
+                const detectorModel = CONFIG.detection.detectorModel;
+                console.log(`🔧 Using detector model: ${detectorModel}`);
+
+                if (detectorModel === 'ssd') {
+                    await Promise.all([
+                        faceapi.nets.ssdMobilenetv1.loadFromUri(CONFIG.modelUrl),
+                        faceapi.nets.faceLandmark68Net.loadFromUri(CONFIG.modelUrl),
+                        faceapi.nets.faceRecognitionNet.loadFromUri(CONFIG.modelUrl),
+                    ]);
+                } else if (detectorModel === 'mtcnn') {
+                    await Promise.all([
+                        faceapi.nets.mtcnn.loadFromUri(CONFIG.modelUrl),
+                        faceapi.nets.faceLandmark68Net.loadFromUri(CONFIG.modelUrl),
+                        faceapi.nets.faceRecognitionNet.loadFromUri(CONFIG.modelUrl),
+                    ]);
+                } else {
+                    await Promise.all([
+                        faceapi.nets.tinyFaceDetector.loadFromUri(CONFIG.modelUrl),
+                        faceapi.nets.faceLandmark68Net.loadFromUri(CONFIG.modelUrl),
+                        faceapi.nets.faceRecognitionNet.loadFromUri(CONFIG.modelUrl),
+                    ]);
+                }
 
                 // Warm-up
                 setVerifyStatus('Warming up...');
@@ -632,7 +651,14 @@
             const ctx = dummy.getContext('2d');
             ctx.fillStyle = 'black';
             ctx.fillRect(0, 0, dummy.width, dummy.height);
-            await faceapi.detectAllFaces(dummy, new faceapi.TinyFaceDetectorOptions());
+
+            if (CONFIG.detection.detectorModel === 'ssd') {
+                await faceapi.detectAllFaces(dummy, new faceapi.SsdMobilenetv1Options());
+            } else if (CONFIG.detection.detectorModel === 'mtcnn') {
+                await faceapi.detectAllFaces(dummy, new faceapi.MtcnnOptions());
+            } else {
+                await faceapi.detectAllFaces(dummy, new faceapi.TinyFaceDetectorOptions());
+            }
         }
 
         // ========== Image Processing ==========
@@ -690,15 +716,35 @@
                     const img = new Image();
                     img.onload = async () => {
                         try {
-                            const options = new faceapi.TinyFaceDetectorOptions({
-                                inputSize: CONFIG.detection.inputSize,
-                                scoreThreshold: CONFIG.detection.scoreThreshold
-                            });
-
-                            const detection = await faceapi
-                                .detectSingleFace(img, options)
-                                .withFaceLandmarks()
-                                .withFaceDescriptor();
+                            // Create detector options based on model
+                            let detection;
+                            if (CONFIG.detection.detectorModel === 'ssd') {
+                                const options = new faceapi.SsdMobilenetv1Options({
+                                    minConfidence: CONFIG.detection.scoreThreshold
+                                });
+                                detection = await faceapi
+                                    .detectSingleFace(img, options)
+                                    .withFaceLandmarks()
+                                    .withFaceDescriptor();
+                            } else if (CONFIG.detection.detectorModel === 'mtcnn') {
+                                const options = new faceapi.MtcnnOptions({
+                                    minFaceSize: 50,
+                                    scaleFactor: 0.709
+                                });
+                                detection = await faceapi
+                                    .detectSingleFace(img, options)
+                                    .withFaceLandmarks()
+                                    .withFaceDescriptor();
+                            } else {
+                                const options = new faceapi.TinyFaceDetectorOptions({
+                                    inputSize: CONFIG.detection.inputSize,
+                                    scoreThreshold: CONFIG.detection.scoreThreshold
+                                });
+                                detection = await faceapi
+                                    .detectSingleFace(img, options)
+                                    .withFaceLandmarks()
+                                    .withFaceDescriptor();
+                            }
 
                             if (detection) {
                                 // Generate unique ID
@@ -800,10 +846,23 @@
         }
 
         async function runDetectionLoop() {
-            const options = new faceapi.TinyFaceDetectorOptions({
-                inputSize: CONFIG.detection.inputSize,
-                scoreThreshold: CONFIG.detection.scoreThreshold
-            });
+            // Create detector options based on model
+            let detectorOptions;
+            if (CONFIG.detection.detectorModel === 'ssd') {
+                detectorOptions = new faceapi.SsdMobilenetv1Options({
+                    minConfidence: CONFIG.detection.scoreThreshold
+                });
+            } else if (CONFIG.detection.detectorModel === 'mtcnn') {
+                detectorOptions = new faceapi.MtcnnOptions({
+                    minFaceSize: 50,
+                    scaleFactor: 0.709
+                });
+            } else {
+                detectorOptions = new faceapi.TinyFaceDetectorOptions({
+                    inputSize: CONFIG.detection.inputSize,
+                    scoreThreshold: CONFIG.detection.scoreThreshold
+                });
+            }
             isDetecting = true;
 
             const loop = async () => {
@@ -816,7 +875,7 @@
                     overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
 
                     const detection = await faceapi
-                        .detectSingleFace(video, options)
+                        .detectSingleFace(video, detectorOptions)
                         .withFaceLandmarks()
                         .withFaceDescriptor();
 

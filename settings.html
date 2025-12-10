@@ -507,17 +507,31 @@
 
         <div class="setting-item">
             <div class="setting-label">
+                <div class="setting-name">Detector Model</div>
+                <div class="setting-desc">SSD = more accurate; Tiny = faster</div>
+            </div>
+            <div class="setting-control">
+                <select id="detectorModel">
+                    <option value="tiny" selected>Tiny Face (Fast)</option>
+                    <option value="ssd">SSD Mobilenet V1 (Accurate)</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="setting-item" id="inputSizeRow">
+            <div class="setting-label">
                 <div class="setting-name">Input Size</div>
-                <div class="setting-desc">Larger = more accurate but slower</div>
+                <div class="setting-desc">Larger = more accurate but slower (Tiny only)</div>
             </div>
             <div class="setting-control">
                 <select id="inputSize">
-                    <option value="128">128 (Fast)</option>
+                    <option value="128">128 (Fastest)</option>
                     <option value="160">160</option>
                     <option value="224">224</option>
-                    <option value="320" selected>320 (Default)</option>
-                    <option value="416">416</option>
-                    <option value="512">512 (Accurate)</option>
+                    <option value="320" selected>320 (Standard)</option>
+                    <option value="416">416 (Better)</option>
+                    <option value="512">512 (High Accuracy)</option>
+                    <option value="608">608 (Max Accuracy)</option>
                 </select>
             </div>
         </div>
@@ -694,6 +708,7 @@
         // ========== Default Settings ==========
         const DEFAULT_SETTINGS = {
             detection: {
+                detectorModel: 'tiny',
                 inputSize: 320,
                 scoreThreshold: 0.5,
             },
@@ -715,6 +730,8 @@
         let pendingAction = null;
 
         // ========== DOM Elements ==========
+        const detectorModel = document.getElementById('detectorModel');
+        const inputSizeRow = document.getElementById('inputSizeRow');
         const inputSize = document.getElementById('inputSize');
         const scoreThreshold = document.getElementById('scoreThreshold');
         const scoreThresholdValue = document.getElementById('scoreThresholdValue');
@@ -751,6 +768,22 @@
             matchThreshold.addEventListener('input', () => {
                 matchThresholdValue.textContent = matchThreshold.value;
             });
+
+            // Detector model change - toggle input size visibility
+            detectorModel.addEventListener('change', () => {
+                updateInputSizeVisibility();
+            });
+        }
+
+        function updateInputSizeVisibility() {
+            // SSD and MTCNN don't use inputSize parameter
+            if (detectorModel.value === 'ssd' || detectorModel.value === 'mtcnn') {
+                inputSizeRow.style.opacity = '0.5';
+                inputSizeRow.style.pointerEvents = 'none';
+            } else {
+                inputSizeRow.style.opacity = '1';
+                inputSizeRow.style.pointerEvents = 'auto';
+            }
         }
 
         // ========== Settings Management ==========
@@ -769,6 +802,7 @@
             // Gather values from UI
             currentSettings = {
                 detection: {
+                    detectorModel: detectorModel.value,
                     inputSize: parseInt(inputSize.value),
                     scoreThreshold: parseFloat(scoreThreshold.value),
                 },
@@ -798,15 +832,19 @@
         }
 
         function updateUI() {
-            inputSize.value = currentSettings.detection.inputSize;
-            scoreThreshold.value = currentSettings.detection.scoreThreshold;
-            scoreThresholdValue.textContent = currentSettings.detection.scoreThreshold;
-            matchThreshold.value = currentSettings.matching.matchThreshold;
-            matchThresholdValue.textContent = currentSettings.matching.matchThreshold;
-            showFPS.checked = currentSettings.performance.showFPS;
+            detectorModel.value = currentSettings.detection?.detectorModel || 'tiny';
+            inputSize.value = currentSettings.detection?.inputSize || 320;
+            scoreThreshold.value = currentSettings.detection?.scoreThreshold || 0.5;
+            scoreThresholdValue.textContent = currentSettings.detection?.scoreThreshold || 0.5;
+            matchThreshold.value = currentSettings.matching?.matchThreshold || 0.6;
+            matchThresholdValue.textContent = currentSettings.matching?.matchThreshold || 0.6;
+            showFPS.checked = currentSettings.performance?.showFPS !== false;
             maxCaptures.value = currentSettings.registration.maxCaptures;
             captureInterval.value = currentSettings.registration.captureInterval;
             autoSaveProgress.checked = currentSettings.registration.autoSaveProgress;
+
+            // Update input size visibility based on detector model
+            updateInputSizeVisibility();
         }
 
         // ========== User Management ==========

@@ -488,6 +488,7 @@
             modelUrl: 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model',
 
             detection: {
+                detectorModel: savedSettings.detection?.detectorModel || 'tiny',
                 inputSize: savedSettings.detection?.inputSize || 320,
                 scoreThreshold: savedSettings.detection?.scoreThreshold || 0.5,
             },
@@ -705,23 +706,36 @@
                     console.log('⏱️ WebGL backend ready');
                 }
 
-                // Load models
+                // Load models based on selected detector
                 setStatus('Loading models...');
-                await Promise.all([
-                    faceapi.nets.tinyFaceDetector.loadFromUri(CONFIG.modelUrl),
-                    faceapi.nets.faceLandmark68Net.loadFromUri(CONFIG.modelUrl),
-                    faceapi.nets.faceRecognitionNet.loadFromUri(CONFIG.modelUrl),
-                ]);
+                const detectorModel = CONFIG.detection.detectorModel;
+                console.log(`🔧 Using detector model: ${detectorModel}`);
+
+                if (detectorModel === 'ssd') {
+                    await Promise.all([
+                        faceapi.nets.ssdMobilenetv1.loadFromUri(CONFIG.modelUrl),
+                        faceapi.nets.faceLandmark68Net.loadFromUri(CONFIG.modelUrl),
+                        faceapi.nets.faceRecognitionNet.loadFromUri(CONFIG.modelUrl),
+                    ]);
+                } else {
+                    await Promise.all([
+                        faceapi.nets.tinyFaceDetector.loadFromUri(CONFIG.modelUrl),
+                        faceapi.nets.faceLandmark68Net.loadFromUri(CONFIG.modelUrl),
+                        faceapi.nets.faceRecognitionNet.loadFromUri(CONFIG.modelUrl),
+                    ]);
+                }
 
                 // Warm-up
                 setStatus('Warming up...');
                 await warmupOnce();
 
-                // Initialize matcher
+                // Initialize matcher with settings
+                console.log(`⚙️ Match Threshold: ${CONFIG.matching.matchThreshold}`);
                 faceMatcher = new FaceMatcher({
                     matchThreshold: CONFIG.matching.matchThreshold,
                     highConfidenceThreshold: CONFIG.matching.highConfidenceThreshold,
                 });
+                console.log(`✅ FaceMatcher initialized with threshold: ${faceMatcher.config.matchThreshold}`);
 
                 const totalTime = performance.now() - initStart;
                 console.log(`✅ Face API ready in ${totalTime.toFixed(0)}ms`);
@@ -747,7 +761,12 @@
             const ctx = dummy.getContext('2d');
             ctx.fillStyle = 'black';
             ctx.fillRect(0, 0, dummy.width, dummy.height);
-            await faceapi.detectAllFaces(dummy, new faceapi.TinyFaceDetectorOptions());
+
+            if (CONFIG.detection.detectorModel === 'ssd') {
+                await faceapi.detectAllFaces(dummy, new faceapi.SsdMobilenetv1Options());
+            } else {
+                await faceapi.detectAllFaces(dummy, new faceapi.TinyFaceDetectorOptions());
+            }
         }
 
         // ========== Camera & Detection ==========
@@ -783,10 +802,18 @@
         }
 
         async function runDetectionLoop() {
-            const options = new faceapi.TinyFaceDetectorOptions({
-                inputSize: CONFIG.detection.inputSize,
-                scoreThreshold: CONFIG.detection.scoreThreshold
-            });
+            // Create detector options based on model
+            let detectorOptions;
+            if (CONFIG.detection.detectorModel === 'ssd') {
+                detectorOptions = new faceapi.SsdMobilenetv1Options({
+                    minConfidence: CONFIG.detection.scoreThreshold
+                });
+            } else {
+                detectorOptions = new faceapi.TinyFaceDetectorOptions({
+                    inputSize: CONFIG.detection.inputSize,
+                    scoreThreshold: CONFIG.detection.scoreThreshold
+                });
+            }
             isDetecting = true;
             timing.lastFpsUpdate = performance.now();
 
@@ -800,7 +827,7 @@
 
                     // Detect face with descriptor
                     const detection = await faceapi
-                        .detectSingleFace(video, options)
+                        .detectSingleFace(video, detectorOptions)
                         .withFaceLandmarks()
                         .withFaceDescriptor();
 
