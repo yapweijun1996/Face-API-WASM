@@ -358,52 +358,78 @@
                 showSpinner();
                 showProgress();
 
+                console.log('🚀 Starting Face API initialization...');
+                const pageStart = performance.now();
+
                 // Step 1: Backend setup (10%)
                 setStatus('Setting backend…');
                 updateProgress(10, 'Setting up WASM backend...');
+                const backendStart = performance.now();
 
                 // 使用 WASM backend - warm-up 更快更稳定
                 // 设置 WASM 文件路径（使用 CDN）
                 const wasmPath = './js/lib/';
+                let backendUsed = 'unknown';
 
                 // 尝试使用全局 tf 对象设置 WASM 路径
                 if (typeof tf !== 'undefined' && tf.wasm && tf.wasm.setWasmPaths) {
                     tf.wasm.setWasmPaths(wasmPath);
                     await tf.setBackend('wasm');
                     await tf.ready();
-                    console.log('WASM backend ready (global tf):', tf.getBackend());
+                    backendUsed = 'wasm';
+                    console.log('✅ WASM backend ready:', tf.getBackend());
                 } else {
                     // Fallback 到 WebGL
-                    console.warn('WASM not available, falling back to WebGL');
+                    console.warn('⚠️ WASM not available, falling back to WebGL');
                     await faceapi.tf.setBackend('webgl');
                     await faceapi.tf.ready();
-                    console.log('WebGL backend ready:', faceapi.tf.getBackend());
+                    backendUsed = 'webgl';
+                    console.log('✅ WebGL backend ready:', faceapi.tf.getBackend());
                 }
+
+                const backendEnd = performance.now();
+                console.log(`⏱️ Backend setup (${backendUsed}): ${(backendEnd - backendStart).toFixed(0)}ms`);
 
                 // Step 2: Load models (10% -> 80%)
                 setStatus('Loading models…');
                 updateProgress(20, 'Loading TinyFaceDetector...');
+                const modelsStart = performance.now();
 
                 // 逐个加载模型以显示进度
                 await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL);
+                console.log('  📦 TinyFaceDetector loaded');
                 updateProgress(40, 'Loading FaceLandmark68Net...');
 
                 await faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL);
+                console.log('  📦 FaceLandmark68Net loaded');
                 updateProgress(60, 'Loading FaceRecognitionNet...');
 
                 await faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL);
+                console.log('  📦 FaceRecognitionNet loaded');
                 updateProgress(80, 'Models loaded!');
+
+                const modelsEnd = performance.now();
+                console.log(`⏱️ Models loading: ${(modelsEnd - modelsStart).toFixed(0)}ms`);
 
                 // Step 3: Warm-up (80% -> 100%)
                 setStatus('Warming up model…');
                 updateProgress(90, 'Warming up model...');
+                const warmupStart = performance.now();
 
                 // 做一次隐藏 warm-up：dummy canvas + 一次 detect
                 await warmupOnce();
 
+                const warmupEnd = performance.now();
+                console.log(`⏱️ Warm-up: ${(warmupEnd - warmupStart).toFixed(0)}ms`);
+
                 updateProgress(100, 'Ready!');
 
                 // 完成
+                const totalTime = performance.now() - pageStart;
+                console.log('────────────────────────────────');
+                console.log(`🚀 Total initialization time: ${totalTime.toFixed(0)}ms`);
+                console.log('────────────────────────────────');
+
                 hideSpinner();
                 setTimeout(() => hideProgress(), 500);
 
@@ -411,7 +437,7 @@
                 startBtn.disabled = false;
 
             } catch (err) {
-                console.error('InitFaceApi Error:', err);
+                console.error('❌ InitFaceApi Error:', err);
                 hideSpinner();
                 hideProgress();
                 setStatus('❌ Error: ' + err.message, 'error');
