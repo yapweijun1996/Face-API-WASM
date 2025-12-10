@@ -1,0 +1,1073 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Face Registration - Modern UI</title>
+    <style>
+        :root {
+            --primary-green: #00d084;
+            --primary-green-hover: #00b871;
+            --primary-green-glow: rgba(0, 208, 132, 0.4);
+            --bg-dark: #0a0a0a;
+            --bg-card: #1a1a1a;
+            --bg-card-hover: #252525;
+            --text-primary: #f0f0f0;
+            --text-secondary: #a0a0a0;
+            --error-red: #ff4757;
+            --warning-yellow: #ffa502;
+            --info-blue: #3498db;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: var(--bg-dark);
+            color: var(--text-primary);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: flex-start;
+            gap: 16px;
+            padding: 24px 16px;
+            min-height: 100vh;
+            margin: 0;
+        }
+
+        h2 {
+            margin: 0;
+            font-size: 1.5rem;
+            font-weight: 600;
+            background: linear-gradient(135deg, var(--primary-green), #00f5a0);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        /* 表单区域 */
+        .form-section {
+            background: var(--bg-card);
+            border-radius: 12px;
+            padding: 20px;
+            width: 100%;
+            max-width: 400px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .form-section.hidden {
+            display: none;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .form-group label {
+            font-size: 12px;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .form-group input {
+            background: var(--bg-dark);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            padding: 12px 14px;
+            color: var(--text-primary);
+            font-size: 14px;
+            transition: border-color 0.2s;
+        }
+
+        .form-group input:focus {
+            outline: none;
+            border-color: var(--primary-green);
+        }
+
+        /* 控制按钮 */
+        .controls {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        button {
+            padding: 12px 24px;
+            border-radius: 8px;
+            border: none;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: all 0.2s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .btn-primary {
+            background: var(--primary-green);
+            color: #000;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            background: var(--primary-green-hover);
+            transform: translateY(-1px);
+            box-shadow: 0 4px 16px var(--primary-green-glow);
+        }
+
+        .btn-secondary {
+            background: var(--bg-card);
+            color: var(--text-primary);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .btn-secondary:hover:not(:disabled) {
+            background: var(--bg-card-hover);
+        }
+
+        .btn-danger {
+            background: var(--error-red);
+            color: #fff;
+        }
+
+        .btn-danger:hover:not(:disabled) {
+            background: #ff6b7a;
+        }
+
+        .btn-warning {
+            background: var(--warning-yellow);
+            color: #000;
+        }
+
+        .btn-warning:hover:not(:disabled) {
+            background: #ffb300;
+        }
+
+        button:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+
+        /* 状态显示 */
+        #statusWrapper {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 14px;
+            color: var(--text-secondary);
+        }
+
+        .spinner {
+            width: 16px;
+            height: 16px;
+            border: 2px solid var(--text-secondary);
+            border-top-color: var(--primary-green);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        .spinner.hidden {
+            display: none;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        #status {
+            font-size: 14px;
+        }
+
+        #status.error {
+            color: var(--error-red);
+        }
+
+        #status.success {
+            color: var(--primary-green);
+        }
+
+        /* Progress Bar */
+        #progressWrapper {
+            width: 100%;
+            max-width: 400px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        #progressWrapper.hidden {
+            display: none;
+        }
+
+        #progressBar {
+            width: 100%;
+            height: 8px;
+            background: var(--bg-card);
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        #progressFill {
+            height: 100%;
+            width: 0%;
+            background: linear-gradient(90deg, var(--primary-green), #00f5a0);
+            border-radius: 4px;
+            transition: width 0.3s ease;
+        }
+
+        .progress-info {
+            display: flex;
+            justify-content: space-between;
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        /* Video 区域 */
+        #videoWrapper {
+            position: relative;
+            width: 480px;
+            max-width: 100%;
+            aspect-ratio: 4 / 3;
+            border-radius: 16px;
+            overflow: hidden;
+            background: var(--bg-card);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        #videoWrapper.hidden {
+            display: none;
+        }
+
+        #video,
+        #overlay {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        #video {
+            transform: scaleX(-1);
+        }
+
+        #overlay {
+            transform: scaleX(-1);
+        }
+
+        /* 提示信息 */
+        #feedbackMessage {
+            position: absolute;
+            top: 16px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.7);
+            color: #fff;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 13px;
+            opacity: 0;
+            transition: opacity 0.3s;
+            white-space: nowrap;
+        }
+
+        #feedbackMessage.show {
+            opacity: 1;
+        }
+
+        #feedbackMessage.success {
+            background: rgba(0, 208, 132, 0.9);
+        }
+
+        #feedbackMessage.error {
+            background: rgba(255, 71, 87, 0.9);
+        }
+
+        /* 缩略图预览 */
+        #thumbnailGrid {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            max-width: 400px;
+            justify-content: center;
+        }
+
+        .thumbnail {
+            width: 48px;
+            height: 48px;
+            border-radius: 8px;
+            object-fit: cover;
+            border: 2px solid var(--bg-card);
+            opacity: 0;
+            transform: scale(0.8);
+            transition: all 0.3s ease;
+        }
+
+        .thumbnail.show {
+            opacity: 1;
+            transform: scale(1);
+        }
+
+        .thumbnail.latest {
+            border-color: var(--primary-green);
+            box-shadow: 0 0 12px var(--primary-green-glow);
+        }
+
+        /* 完成画面 */
+        #completionSection {
+            background: var(--bg-card);
+            border-radius: 16px;
+            padding: 32px;
+            text-align: center;
+            border: 1px solid rgba(0, 208, 132, 0.3);
+            max-width: 400px;
+            width: 100%;
+        }
+
+        #completionSection.hidden {
+            display: none;
+        }
+
+        #completionSection .icon {
+            font-size: 48px;
+            margin-bottom: 16px;
+        }
+
+        #completionSection h3 {
+            margin: 0 0 8px 0;
+            color: var(--primary-green);
+        }
+
+        #completionSection p {
+            color: var(--text-secondary);
+            margin: 0 0 20px 0;
+        }
+
+        /* Error Modal */
+        #errorModal {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.8);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.3s ease;
+        }
+
+        #errorModal.visible {
+            opacity: 1;
+            visibility: visible;
+        }
+
+        .error-content {
+            background: var(--bg-card);
+            padding: 24px;
+            border-radius: 16px;
+            max-width: 400px;
+            text-align: center;
+            border: 1px solid rgba(255, 71, 87, 0.3);
+        }
+
+        .error-content h3 {
+            color: var(--error-red);
+            margin: 0 0 12px 0;
+        }
+
+        .error-content p {
+            color: var(--text-secondary);
+            margin: 0 0 16px 0;
+            font-size: 14px;
+        }
+
+        /* 返回链接 */
+        .back-link {
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-size: 13px;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            margin-top: 20px;
+        }
+
+        .back-link:hover {
+            color: var(--text-primary);
+        }
+    </style>
+
+    <!-- 1. TensorFlow.js -->
+    <script src="./js/lib/tf.min.js"></script>
+    <!-- 2. WASM Backend -->
+    <script src="./js/lib/tf-backend-wasm.js"></script>
+    <!-- 3. FaceAPI -->
+    <script src="./js/lib/face-api.js"></script>
+    <!-- 4. 我们的模块 -->
+    <script src="./js/core/FaceStorage.js"></script>
+    <script src="./js/core/FaceRegistrationManager.js"></script>
+</head>
+
+<body>
+    <h2>📝 Face Registration</h2>
+
+    <!-- 用户信息表单 -->
+    <div id="formSection" class="form-section">
+        <div class="form-group">
+            <label>User ID</label>
+            <input type="text" id="userIdInput" placeholder="Enter user ID" value="user001">
+        </div>
+        <div class="form-group">
+            <label>Name</label>
+            <input type="text" id="userNameInput" placeholder="Enter your name" value="Test User">
+        </div>
+        <button id="startRegBtn" class="btn-primary" disabled>
+            <span>🎬</span> Start Registration
+        </button>
+        <div id="statusWrapper">
+            <div id="spinner" class="spinner"></div>
+            <span id="status">Loading models...</span>
+        </div>
+    </div>
+
+    <!-- 进度条 -->
+    <div id="progressWrapper" class="hidden">
+        <div id="progressBar">
+            <div id="progressFill"></div>
+        </div>
+        <div class="progress-info">
+            <span id="progressText">0 / 20 captures</span>
+            <span id="progressPercent">0%</span>
+        </div>
+    </div>
+
+    <!-- Video 区域 -->
+    <div id="videoWrapper" class="hidden">
+        <video id="video" autoplay muted playsinline></video>
+        <canvas id="overlay"></canvas>
+        <div id="feedbackMessage"></div>
+    </div>
+
+    <!-- 控制按钮（注册中显示） -->
+    <div id="registrationControls" class="controls hidden">
+        <button id="cancelBtn" class="btn-danger">❌ Cancel</button>
+        <button id="restartBtn" class="btn-warning">🔄 Restart</button>
+        <button id="finishEarlyBtn" class="btn-secondary" disabled>✓ Finish Early</button>
+    </div>
+
+    <!-- 缩略图网格 -->
+    <div id="thumbnailGrid"></div>
+
+    <!-- 完成画面 -->
+    <div id="completionSection" class="hidden">
+        <div class="icon">✅</div>
+        <h3>Registration Complete!</h3>
+        <p id="completionInfo">Successfully captured 20 face samples.</p>
+        <div class="controls">
+            <button id="downloadBtn" class="btn-primary">📥 Download JSON</button>
+            <button id="registerAnotherBtn" class="btn-secondary">➕ Register Another</button>
+        </div>
+    </div>
+
+    <!-- 返回首页链接 -->
+    <a href="home.html" class="back-link">← Back to Home</a>
+
+    <!-- Error Modal -->
+    <div id="errorModal">
+        <div class="error-content">
+            <h3>⚠️ Error</h3>
+            <p id="errorMessage">An error occurred.</p>
+            <button id="errorCloseBtn" class="btn-secondary">Close</button>
+        </div>
+    </div>
+
+    <script>
+        // ========== DOM Elements ==========
+        const formSection = document.getElementById('formSection');
+        const userIdInput = document.getElementById('userIdInput');
+        const userNameInput = document.getElementById('userNameInput');
+        const startRegBtn = document.getElementById('startRegBtn');
+        const statusEl = document.getElementById('status');
+        const spinner = document.getElementById('spinner');
+
+        const progressWrapper = document.getElementById('progressWrapper');
+        const progressFill = document.getElementById('progressFill');
+        const progressText = document.getElementById('progressText');
+        const progressPercent = document.getElementById('progressPercent');
+
+        const videoWrapper = document.getElementById('videoWrapper');
+        const video = document.getElementById('video');
+        const overlay = document.getElementById('overlay');
+        const overlayCtx = overlay.getContext('2d');
+        const feedbackMessage = document.getElementById('feedbackMessage');
+
+        const registrationControls = document.getElementById('registrationControls');
+        const cancelBtn = document.getElementById('cancelBtn');
+        const restartBtn = document.getElementById('restartBtn');
+        const finishEarlyBtn = document.getElementById('finishEarlyBtn');
+        const thumbnailGrid = document.getElementById('thumbnailGrid');
+
+        const completionSection = document.getElementById('completionSection');
+        const completionInfo = document.getElementById('completionInfo');
+        const downloadBtn = document.getElementById('downloadBtn');
+        const registerAnotherBtn = document.getElementById('registerAnotherBtn');
+
+        const errorModal = document.getElementById('errorModal');
+        const errorMessage = document.getElementById('errorMessage');
+        const errorCloseBtn = document.getElementById('errorCloseBtn');
+
+        // ========== Load Settings from localStorage ==========
+        const SETTINGS_KEY = 'faceRecognitionSettings';
+        const savedSettings = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
+
+        // ========== Configuration ==========
+        const CONFIG = {
+            // 模型路径
+            modelUrl: './models',
+
+            // 检测参数 - 从 Settings 读取
+            detection: {
+                detectorModel: savedSettings.detection?.detectorModel || 'tiny',
+                inputSize: savedSettings.detection?.inputSize || 320,
+                scoreThreshold: savedSettings.detection?.scoreThreshold || 0.5,
+            },
+
+            // 注册参数 - 从 Settings 读取
+            registration: {
+                maxCaptures: savedSettings.registration?.maxCaptures || 20,
+                captureInterval: savedSettings.registration?.captureInterval || 600,
+                similarityThreshold: 0.15,  // 相似度阈值（避免重复帧）
+                consistencyThreshold: 0.4,  // 同一人判定阈值
+            },
+
+            // 摄像头参数
+            camera: {
+                width: 640,
+                height: 480,
+                facingMode: 'user',
+            },
+
+            // 性能参数 - 从 Settings 读取
+            performance: {
+                logTiming: true,
+                showFPS: savedSettings.performance?.showFPS !== false,
+            }
+        };
+
+        console.log('📋 Loaded CONFIG from settings:', CONFIG);
+
+        // ========== State ==========
+        const MODEL_URL = CONFIG.modelUrl;
+        let registrationManager = null;
+        let isDetecting = false;
+        let detectionLoop = null;
+
+        // Performance tracking
+        const timing = {
+            pageStart: performance.now(),
+            backendStart: 0,
+            backendEnd: 0,
+            modelsStart: 0,
+            modelsEnd: 0,
+            warmupStart: 0,
+            warmupEnd: 0,
+            totalReady: 0,
+
+            // Detection FPS tracking
+            lastDetectionTime: 0,
+            detectionCount: 0,
+            fpsUpdateInterval: 1000,
+            lastFpsUpdate: 0,
+            currentFps: 0,
+        };
+
+        function logTiming(label, duration) {
+            if (CONFIG.performance.logTiming) {
+                console.log(`⏱️ [Timing] ${label}: ${duration.toFixed(0)}ms`);
+            }
+        }
+
+        function logTimingSummary() {
+            if (!CONFIG.performance.logTiming) return;
+
+            console.group('📊 Loading Time Summary');
+            console.log(`Backend setup: ${(timing.backendEnd - timing.backendStart).toFixed(0)}ms`);
+            console.log(`Models loading: ${(timing.modelsEnd - timing.modelsStart).toFixed(0)}ms`);
+            console.log(`Warm-up: ${(timing.warmupEnd - timing.warmupStart).toFixed(0)}ms`);
+            console.log(`────────────────`);
+            console.log(`🚀 Total ready time: ${(timing.totalReady - timing.pageStart).toFixed(0)}ms`);
+            console.groupEnd();
+
+            console.log('\n📝 Current Configuration:', CONFIG);
+        }
+
+        // ========== UI Helpers ==========
+        function showSpinner() {
+            spinner.classList.remove('hidden');
+        }
+
+        function hideSpinner() {
+            spinner.classList.add('hidden');
+        }
+
+        function setStatus(text, type = 'normal') {
+            statusEl.textContent = text;
+            statusEl.className = type;
+        }
+
+        function showFeedback(text, type = 'info', duration = 1500) {
+            feedbackMessage.textContent = text;
+            feedbackMessage.className = `show ${type}`;
+            setTimeout(() => {
+                feedbackMessage.className = '';
+            }, duration);
+        }
+
+        function showError(message) {
+            errorMessage.textContent = message;
+            errorModal.classList.add('visible');
+        }
+
+        function hideError() {
+            errorModal.classList.remove('visible');
+        }
+
+        function updateProgress(progress) {
+            progressFill.style.width = `${progress.percentage}%`;
+            progressText.textContent = `${progress.current} / ${progress.total} captures`;
+            progressPercent.textContent = `${progress.percentage}%`;
+
+            // Enable finish early button after 3 captures
+            finishEarlyBtn.disabled = progress.current < 3;
+        }
+
+        function addThumbnail(dataUrl) {
+            const img = document.createElement('img');
+            img.src = dataUrl;
+            img.className = 'thumbnail';
+
+            // Remove latest class from previous
+            const prev = thumbnailGrid.querySelector('.thumbnail.latest');
+            if (prev) prev.classList.remove('latest');
+
+            thumbnailGrid.appendChild(img);
+
+            // Trigger animation
+            requestAnimationFrame(() => {
+                img.classList.add('show', 'latest');
+            });
+        }
+
+        // ========== Core Functions ==========
+
+        async function initFaceApi() {
+            try {
+                showSpinner();
+
+                console.log('🚀 Starting Face API initialization...');
+                console.log('📝 Configuration:', CONFIG);
+
+                // ===== Step 1: Backend Setup =====
+                timing.backendStart = performance.now();
+                setStatus('Setting up WASM backend...');
+
+                const wasmPath = './js/lib/';
+                let backendUsed = 'unknown';
+
+                if (typeof tf !== 'undefined' && tf.wasm && tf.wasm.setWasmPaths) {
+                    tf.wasm.setWasmPaths(wasmPath);
+                    await tf.setBackend('wasm');
+                    await tf.ready();
+                    backendUsed = 'wasm';
+                } else {
+                    await faceapi.tf.setBackend('webgl');
+                    await faceapi.tf.ready();
+                    backendUsed = 'webgl';
+                }
+
+                timing.backendEnd = performance.now();
+                logTiming(`Backend setup (${backendUsed})`, timing.backendEnd - timing.backendStart);
+
+                // ===== Step 2: Load Models =====
+                timing.modelsStart = performance.now();
+                setStatus('Loading face detection models...');
+
+                const detectorModel = CONFIG.detection.detectorModel;
+                console.log(`🔧 Using detector model: ${detectorModel}`);
+
+                if (detectorModel === 'ssd') {
+                    await Promise.all([
+                        faceapi.nets.ssdMobilenetv1.loadFromUri(MODEL_URL),
+                        faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
+                        faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
+                    ]);
+                } else {
+                    await Promise.all([
+                        faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
+                        faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
+                        faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
+                    ]);
+                }
+
+                timing.modelsEnd = performance.now();
+                logTiming('Models loading', timing.modelsEnd - timing.modelsStart);
+
+                // ===== Step 3: Warm-up =====
+                timing.warmupStart = performance.now();
+                setStatus('Warming up...');
+
+                await warmupOnce();
+
+                timing.warmupEnd = performance.now();
+                logTiming('Warm-up', timing.warmupEnd - timing.warmupStart);
+
+                // ===== Step 4: Initialize Registration Manager =====
+                await faceStorage.init();
+                registrationManager = new FaceRegistrationManager({
+                    maxCaptures: CONFIG.registration.maxCaptures,
+                    captureInterval: CONFIG.registration.captureInterval,
+                    similarityThreshold: CONFIG.registration.similarityThreshold,
+                    consistencyThreshold: CONFIG.registration.consistencyThreshold,
+                    autoSaveProgress: true
+                });
+                await registrationManager.init(faceStorage);
+
+                // Setup callbacks
+                registrationManager.onProgress = updateProgress;
+                registrationManager.onCapture = (data) => {
+                    if (data.thumbnail) {
+                        addThumbnail(data.thumbnail);
+                    }
+                    showFeedback(`Captured ${data.index}/${CONFIG.registration.maxCaptures}`, 'success', 800);
+                };
+                registrationManager.onComplete = onRegistrationComplete;
+                registrationManager.onError = (err) => showError(err.message);
+
+                // ===== Done! =====
+                timing.totalReady = performance.now();
+                logTimingSummary();
+
+                hideSpinner();
+                setStatus('Ready! Enter your info and start.', 'success');
+                startRegBtn.disabled = false;
+
+            } catch (error) {
+                console.error('❌ Init error:', error);
+                hideSpinner();
+                setStatus('Error: ' + error.message, 'error');
+            }
+        }
+
+        async function warmupOnce() {
+            const dummy = document.createElement('canvas');
+            dummy.width = 160;
+            dummy.height = 120;
+            const ctx = dummy.getContext('2d');
+            ctx.fillStyle = 'black';
+            ctx.fillRect(0, 0, dummy.width, dummy.height);
+
+            if (CONFIG.detection.detectorModel === 'ssd') {
+                await faceapi.detectAllFaces(dummy, new faceapi.SsdMobilenetv1Options());
+            } else {
+                await faceapi.detectAllFaces(dummy, new faceapi.TinyFaceDetectorOptions());
+            }
+        }
+
+        async function startCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
+                    audio: false,
+                });
+
+                video.srcObject = stream;
+
+                return new Promise((resolve) => {
+                    video.onloadedmetadata = () => {
+                        overlay.width = video.videoWidth;
+                        overlay.height = video.videoHeight;
+                        video.play();
+                        resolve();
+                    };
+                });
+            } catch (err) {
+                throw new Error('Camera access denied: ' + err.message);
+            }
+        }
+
+        function stopCamera() {
+            if (video.srcObject) {
+                const tracks = video.srcObject.getTracks();
+                tracks.forEach(track => track.stop());
+                video.srcObject = null;
+            }
+            isDetecting = false;
+            if (detectionLoop) {
+                cancelAnimationFrame(detectionLoop);
+                detectionLoop = null;
+            }
+        }
+
+        async function runDetectionLoop() {
+            // 根据设置选择检测器
+            let options;
+            const detectorModel = CONFIG.detection.detectorModel;
+
+            if (detectorModel === 'ssd') {
+                options = new faceapi.SsdMobilenetv1Options({
+                    minConfidence: CONFIG.detection.scoreThreshold
+                });
+                console.log(`🎯 Detection loop started with SSD Mobilenet`);
+            } else {
+                options = new faceapi.TinyFaceDetectorOptions({
+                    inputSize: CONFIG.detection.inputSize,
+                    scoreThreshold: CONFIG.detection.scoreThreshold
+                });
+                console.log(`🎯 Detection loop started with TinyFaceDetector, inputSize=${CONFIG.detection.inputSize}`);
+            }
+
+            isDetecting = true;
+
+            const loop = async () => {
+                if (!isDetecting || video.paused || video.ended) {
+                    return;
+                }
+
+                if (video.readyState === video.HAVE_ENOUGH_DATA) {
+                    const detectStart = performance.now();
+
+                    // Detect face with descriptor
+                    const detection = await faceapi
+                        .detectSingleFace(video, options)
+                        .withFaceLandmarks()
+                        .withFaceDescriptor();
+
+                    const detectEnd = performance.now();
+                    const detectTime = detectEnd - detectStart;
+
+                    // FPS calculation
+                    timing.detectionCount++;
+                    const now = performance.now();
+                    if (now - timing.lastFpsUpdate >= timing.fpsUpdateInterval) {
+                        timing.currentFps = Math.round((timing.detectionCount * 1000) / (now - timing.lastFpsUpdate));
+                        timing.lastFpsUpdate = now;
+                        timing.detectionCount = 0;
+
+                        if (CONFIG.performance.showFPS) {
+                            console.log(`📊 Detection FPS: ${timing.currentFps}, Avg detection time: ${detectTime.toFixed(0)}ms`);
+                        }
+                    }
+
+                    // Clear overlay
+                    overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
+
+                    // Helper: 绘制镜像翻转后正常显示的文字
+                    // 由于 canvas 被 CSS scaleX(-1) 翻转，我们需要：
+                    // 1. 反向翻转文字本身
+                    // 2. 调整 x 坐标（左边变右边）
+                    function drawTextMirrored(text, rightOffset, y, color, font) {
+                        overlayCtx.save();
+                        overlayCtx.font = font;
+                        overlayCtx.fillStyle = color;
+
+                        const metrics = overlayCtx.measureText(text);
+                        // 计算实际绘制位置（从右边算起，因为镜像后左右颠倒）
+                        const x = rightOffset;
+
+                        // 翻转文字
+                        overlayCtx.translate(x, y);
+                        overlayCtx.scale(-1, 1);
+                        overlayCtx.fillText(text, 0, 0);
+                        overlayCtx.restore();
+                    }
+
+                    // Draw FPS on overlay (显示在用户看到的左上角)
+                    if (CONFIG.performance.showFPS && timing.currentFps > 0) {
+                        drawTextMirrored(
+                            `FPS: ${timing.currentFps} | ${detectTime.toFixed(0)}ms`,
+                            120, 30,
+                            '#00d084', '12px monospace'
+                        );
+                    }
+
+                    if (detection) {
+                        // Draw face box
+                        const box = detection.detection.box;
+                        overlayCtx.strokeStyle = '#00d084';
+                        overlayCtx.lineWidth = 3;
+                        overlayCtx.strokeRect(box.x, box.y, box.width, box.height);
+
+                        // Draw confidence score (显示在人脸框右上方)
+                        const score = (detection.detection.score * 100).toFixed(1);
+                        drawTextMirrored(
+                            `${score}%`,
+                            box.x, box.y - 5,
+                            '#00d084', '14px sans-serif'
+                        );
+
+                        // Get frame data for thumbnail
+                        const tempCanvas = document.createElement('canvas');
+                        tempCanvas.width = video.videoWidth;
+                        tempCanvas.height = video.videoHeight;
+                        const tempCtx = tempCanvas.getContext('2d');
+                        tempCtx.drawImage(video, 0, 0);
+                        const frameData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
+
+                        // Process detection
+                        const result = registrationManager.processDetection(detection, frameData);
+
+                        if (!result.accepted && result.reason === 'too_similar') {
+                            showFeedback('Turn your head slightly...', 'info', 1000);
+                        } else if (!result.accepted && result.reason === 'low_confidence') {
+                            showFeedback('Move closer to camera', 'error', 1000);
+                        }
+                    } else {
+                        showFeedback('No face detected', 'error', 500);
+                    }
+                }
+
+                detectionLoop = requestAnimationFrame(loop);
+            };
+
+            loop();
+        }
+
+        // ========== Registration Flow ==========
+
+        async function startRegistration() {
+            const userId = userIdInput.value.trim();
+            const userName = userNameInput.value.trim();
+
+            if (!userId || !userName) {
+                showError('Please enter both User ID and Name');
+                return;
+            }
+
+            try {
+                // Hide form, show video
+                formSection.classList.add('hidden');
+                videoWrapper.classList.remove('hidden');
+                progressWrapper.classList.remove('hidden');
+                registrationControls.classList.remove('hidden');
+                thumbnailGrid.innerHTML = '';
+
+                // Start camera
+                await startCamera();
+
+                // Start registration
+                registrationManager.start(userId, userName);
+                updateProgress(registrationManager.getProgress());
+
+                // Start detection loop
+                runDetectionLoop();
+
+            } catch (error) {
+                showError(error.message);
+                cancelRegistration();
+            }
+        }
+
+        function cancelRegistration() {
+            stopCamera();
+            registrationManager.cancel();
+
+            // Reset UI
+            formSection.classList.remove('hidden');
+            videoWrapper.classList.add('hidden');
+            progressWrapper.classList.add('hidden');
+            registrationControls.classList.add('hidden');
+            thumbnailGrid.innerHTML = '';
+            overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
+        }
+
+        async function finishEarly() {
+            try {
+                await registrationManager.finishEarly();
+            } catch (error) {
+                showError(error.message);
+            }
+        }
+
+        function onRegistrationComplete(data) {
+            stopCamera();
+
+            // Hide registration UI
+            videoWrapper.classList.add('hidden');
+            progressWrapper.classList.add('hidden');
+            registrationControls.classList.add('hidden');
+
+            // Show completion
+            completionInfo.textContent = `Successfully captured ${data.descriptorCount} face samples for ${data.userName}.`;
+            completionSection.classList.remove('hidden');
+        }
+
+        function downloadData() {
+            registrationManager.downloadAsJSON();
+        }
+
+        function registerAnother() {
+            completionSection.classList.add('hidden');
+            formSection.classList.remove('hidden');
+            thumbnailGrid.innerHTML = '';
+            userIdInput.value = '';
+            userNameInput.value = '';
+        }
+
+        // 重新开始注册（清除当前采集的数据）
+        async function restartRegistration() {
+            // 保留用户信息
+            const userId = userIdInput.value;
+            const userName = userNameInput.value;
+
+            // 取消当前采集（清除数据）
+            registrationManager.cancel();
+
+            // 清除缩略图
+            thumbnailGrid.innerHTML = '';
+
+            // 重置进度条
+            updateProgress(0, 0);
+            finishEarlyBtn.disabled = true;
+
+            // 显示反馈
+            showFeedback('🔄 Restarted! Capturing again...', 'success', 1500);
+
+            console.log(`🔄 Registration restarted for ${userName}`);
+
+            // 重新开始采集（保持摄像头运行）
+            registrationManager.start(userId, userName);
+        }
+
+        // ========== Event Listeners ==========
+        startRegBtn.addEventListener('click', startRegistration);
+        cancelBtn.addEventListener('click', cancelRegistration);
+        restartBtn.addEventListener('click', restartRegistration);
+        finishEarlyBtn.addEventListener('click', finishEarly);
+        downloadBtn.addEventListener('click', downloadData);
+        registerAnotherBtn.addEventListener('click', registerAnother);
+        errorCloseBtn.addEventListener('click', hideError);
+        errorModal.addEventListener('click', (e) => {
+            if (e.target === errorModal) hideError();
+        });
+
+        // Initialize on load
+        window.addEventListener('load', initFaceApi);
+    </script>
+</body>
+
+</html>

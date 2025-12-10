@@ -1,0 +1,955 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Quick Demo - Ad-hoc Verification</title>
+    <style>
+        :root {
+            --primary-green: #00d084;
+            --primary-green-hover: #00b871;
+            --primary-green-glow: rgba(0, 208, 132, 0.4);
+            --bg-dark: #0a0a0a;
+            --bg-card: #1a1a1a;
+            --bg-card-hover: #252525;
+            --text-primary: #f0f0f0;
+            --text-secondary: #a0a0a0;
+            --error-red: #ff4757;
+            --warning-yellow: #ffa502;
+            --info-blue: #3498db;
+            --accent-cyan: #00cec9;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: var(--bg-dark);
+            color: var(--text-primary);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: flex-start;
+            gap: 16px;
+            padding: 24px 16px;
+            min-height: 100vh;
+            margin: 0;
+        }
+
+        h2 {
+            margin: 0;
+            font-size: 1.5rem;
+            font-weight: 600;
+            background: linear-gradient(135deg, var(--accent-cyan), #55efc4);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        /* 主布局 */
+        .main-layout {
+            display: flex;
+            gap: 24px;
+            width: 100%;
+            max-width: 1000px;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        /* 面板通用样式 */
+        .panel {
+            background: var(--bg-card);
+            border-radius: 16px;
+            padding: 20px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            flex: 1;
+            min-width: 300px;
+            max-width: 480px;
+        }
+
+        .panel-header {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 16px;
+        }
+
+        .panel-header .icon {
+            font-size: 24px;
+        }
+
+        .panel-header .title {
+            font-size: 16px;
+            font-weight: 600;
+        }
+
+        .panel-header .badge {
+            background: var(--accent-cyan);
+            color: #000;
+            font-size: 11px;
+            font-weight: 600;
+            padding: 2px 8px;
+            border-radius: 10px;
+            margin-left: auto;
+        }
+
+        /* 上传区域 */
+        .upload-zone {
+            border: 2px dashed rgba(255, 255, 255, 0.2);
+            border-radius: 12px;
+            padding: 30px 20px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin-bottom: 16px;
+        }
+
+        .upload-zone:hover {
+            border-color: var(--accent-cyan);
+            background: rgba(0, 206, 201, 0.05);
+        }
+
+        .upload-zone.dragover {
+            border-color: var(--primary-green);
+            background: rgba(0, 208, 132, 0.1);
+        }
+
+        .upload-zone .icon {
+            font-size: 36px;
+            margin-bottom: 12px;
+        }
+
+        .upload-zone .text {
+            font-size: 14px;
+            color: var(--text-secondary);
+        }
+
+        .upload-zone .hint {
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-top: 8px;
+            opacity: 0.7;
+        }
+
+        /* 图片网格 */
+        .image-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
+            gap: 10px;
+            max-height: 200px;
+            overflow-y: auto;
+            padding: 4px;
+        }
+
+        .image-item {
+            position: relative;
+            aspect-ratio: 1;
+            border-radius: 10px;
+            overflow: hidden;
+            background: var(--bg-dark);
+            border: 2px solid transparent;
+        }
+
+        .image-item img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .image-item.success {
+            border-color: var(--primary-green);
+        }
+
+        .image-item.error {
+            border-color: var(--error-red);
+        }
+
+        .image-item .overlay {
+            position: absolute;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.6);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+        }
+
+        .image-item .name {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: linear-gradient(transparent, rgba(0, 0, 0, 0.8));
+            padding: 16px 4px 4px;
+            font-size: 10px;
+            text-align: center;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        /* 状态信息 */
+        .status-bar {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            color: var(--text-secondary);
+            margin-top: 12px;
+        }
+
+        .status-bar .spinner {
+            width: 14px;
+            height: 14px;
+            border: 2px solid var(--text-secondary);
+            border-top-color: var(--accent-cyan);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        .status-bar .spinner.hidden {
+            display: none;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        .status-bar.success {
+            color: var(--primary-green);
+        }
+
+        .status-bar.error {
+            color: var(--error-red);
+        }
+
+        /* Video 区域 */
+        #videoWrapper {
+            position: relative;
+            width: 100%;
+            aspect-ratio: 4 / 3;
+            border-radius: 12px;
+            overflow: hidden;
+            background: var(--bg-dark);
+            border: 2px solid rgba(255, 255, 255, 0.1);
+        }
+
+        #videoWrapper.matched {
+            border-color: var(--primary-green);
+            box-shadow: 0 0 20px var(--primary-green-glow);
+        }
+
+        #videoWrapper.no-match {
+            border-color: var(--error-red);
+        }
+
+        #video,
+        #overlay {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        #video {
+            transform: scaleX(-1);
+        }
+
+        #overlay {
+            transform: scaleX(-1);
+        }
+
+        /* 匹配结果 */
+        #matchResult {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: linear-gradient(transparent, rgba(0, 0, 0, 0.9));
+            padding: 30px 16px 16px;
+            text-align: center;
+            transition: all 0.3s ease;
+        }
+
+        #matchResult.hidden {
+            opacity: 0;
+            transform: translateY(20px);
+        }
+
+        #matchResult .match-name {
+            font-size: 20px;
+            font-weight: 700;
+            margin-bottom: 4px;
+        }
+
+        #matchResult .match-confidence {
+            font-size: 13px;
+            color: var(--text-secondary);
+        }
+
+        #matchResult.matched .match-name {
+            color: var(--primary-green);
+        }
+
+        #matchResult.no-match .match-name {
+            color: var(--error-red);
+        }
+
+        /* 按钮 */
+        button {
+            padding: 12px 24px;
+            border-radius: 8px;
+            border: none;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: all 0.2s ease;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            width: 100%;
+        }
+
+        .btn-primary {
+            background: var(--accent-cyan);
+            color: #000;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            background: #00e5df;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 16px rgba(0, 206, 201, 0.4);
+        }
+
+        .btn-danger {
+            background: var(--error-red);
+            color: #fff;
+        }
+
+        .btn-danger:hover:not(:disabled) {
+            background: #ff6b7a;
+        }
+
+        .btn-secondary {
+            background: var(--bg-dark);
+            color: var(--text-primary);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .btn-secondary:hover:not(:disabled) {
+            background: var(--bg-card-hover);
+        }
+
+        button:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin-top: 16px;
+        }
+
+        .controls button {
+            flex: 1;
+        }
+
+        /* 隐藏的文件输入 */
+        .file-input {
+            display: none;
+        }
+
+        /* 返回链接 */
+        .back-link {
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-size: 13px;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            margin-top: 20px;
+        }
+
+        .back-link:hover {
+            color: var(--text-primary);
+        }
+
+        /* Placeholder for video */
+        .video-placeholder {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            color: var(--text-secondary);
+            font-size: 14px;
+            gap: 12px;
+        }
+
+        .video-placeholder .icon {
+            font-size: 48px;
+            opacity: 0.5;
+        }
+    </style>
+
+    <!-- 1. TensorFlow.js -->
+    <script src="./js/lib/tf.min.js"></script>
+    <!-- 2. WASM Backend -->
+    <script src="./js/lib/tf-backend-wasm.js"></script>
+    <!-- 3. FaceAPI -->
+    <script src="./js/lib/face-api.js"></script>
+    <!-- 4. 我们的模块 -->
+    <script src="./js/core/FaceMatcher.js?v=2"></script>
+</head>
+
+<body>
+    <h2>📸 Quick Demo - Ad-hoc Verification</h2>
+
+    <div class="main-layout">
+        <!-- Left Panel: Reference Images -->
+        <div class="panel">
+            <div class="panel-header">
+                <span class="icon">🖼️</span>
+                <span class="title">Reference Images</span>
+                <span class="badge" id="imageCount">0</span>
+            </div>
+
+            <div class="upload-zone" id="uploadZone">
+                <div class="icon">📤</div>
+                <div class="text">Drop images here or click to upload</div>
+                <div class="hint">Supports multiple JPG, PNG files</div>
+            </div>
+            <input type="file" id="imageInput" class="file-input" accept="image/*" multiple>
+
+            <div class="image-grid" id="imageGrid"></div>
+
+            <div class="status-bar" id="uploadStatus">
+                <div class="spinner hidden" id="uploadSpinner"></div>
+                <span id="uploadStatusText">Upload reference photos to get started</span>
+            </div>
+        </div>
+
+        <!-- Right Panel: Live Verification -->
+        <div class="panel">
+            <div class="panel-header">
+                <span class="icon">🎥</span>
+                <span class="title">Live Verification</span>
+            </div>
+
+            <div id="videoWrapper">
+                <div class="video-placeholder" id="videoPlaceholder">
+                    <div class="icon">📷</div>
+                    <div>Upload reference images first</div>
+                </div>
+                <video id="video" autoplay muted playsinline style="display: none;"></video>
+                <canvas id="overlay" style="display: none;"></canvas>
+                <div id="matchResult" class="hidden">
+                    <div class="match-name">Scanning...</div>
+                    <div class="match-confidence"></div>
+                </div>
+            </div>
+
+            <div class="status-bar" id="verifyStatus">
+                <div class="spinner hidden" id="verifySpinner"></div>
+                <span id="verifyStatusText">Waiting for reference images...</span>
+            </div>
+
+            <div class="controls">
+                <button id="startBtn" class="btn-primary" disabled>▶ Start Camera</button>
+                <button id="stopBtn" class="btn-danger" disabled>⏹ Stop</button>
+            </div>
+            <div class="controls" style="margin-top: 8px;">
+                <button id="clearBtn" class="btn-secondary">🗑️ Clear All</button>
+            </div>
+        </div>
+    </div>
+
+    <a href="home.html" class="back-link">← Back to Home</a>
+
+    <script>
+        // ========== Load Settings from localStorage ==========
+        const SETTINGS_KEY = 'faceRecognitionSettings';
+        const savedSettings = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
+
+        const CONFIG = {
+            modelUrl: './models',
+            detection: {
+                detectorModel: savedSettings.detection?.detectorModel || 'tiny',
+                inputSize: savedSettings.detection?.inputSize || 320,
+                scoreThreshold: savedSettings.detection?.scoreThreshold || 0.5,
+            },
+            matching: {
+                matchThreshold: savedSettings.matching?.matchThreshold || 0.6,
+                highConfidenceThreshold: savedSettings.matching?.highConfidenceThreshold || 0.4,
+            },
+        };
+
+        console.log('📋 Loaded CONFIG from settings:', CONFIG);
+
+        // ========== DOM Elements ==========
+        const uploadZone = document.getElementById('uploadZone');
+        const imageInput = document.getElementById('imageInput');
+        const imageGrid = document.getElementById('imageGrid');
+        const imageCount = document.getElementById('imageCount');
+        const uploadSpinner = document.getElementById('uploadSpinner');
+        const uploadStatusText = document.getElementById('uploadStatusText');
+
+        const videoWrapper = document.getElementById('videoWrapper');
+        const videoPlaceholder = document.getElementById('videoPlaceholder');
+        const video = document.getElementById('video');
+        const overlay = document.getElementById('overlay');
+        const overlayCtx = overlay.getContext('2d');
+        const matchResult = document.getElementById('matchResult');
+        const verifySpinner = document.getElementById('verifySpinner');
+        const verifyStatusText = document.getElementById('verifyStatusText');
+
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const clearBtn = document.getElementById('clearBtn');
+
+        // ========== State ==========
+        let faceMatcher = null;
+        let faceApiReady = false;
+        let isDetecting = false;
+        let detectionLoop = null;
+        const adhocUsers = []; // Stores { id, name, descriptors, thumbnail }
+
+        // ========== UI Helpers ==========
+        function setUploadStatus(text, type = 'normal') {
+            uploadStatusText.textContent = text;
+            uploadStatusText.parentElement.className = `status-bar ${type}`;
+        }
+
+        function setVerifyStatus(text, type = 'normal') {
+            verifyStatusText.textContent = text;
+            verifyStatusText.parentElement.className = `status-bar ${type}`;
+        }
+
+        function updateImageCount() {
+            imageCount.textContent = adhocUsers.length;
+            startBtn.disabled = adhocUsers.length === 0 || !faceApiReady;
+        }
+
+        function addImageCard(id, name, thumbnail, success) {
+            const div = document.createElement('div');
+            div.className = `image-item ${success ? 'success' : 'error'}`;
+            div.dataset.id = id;
+            div.innerHTML = `
+                <img src="${thumbnail}" alt="${name}">
+                ${success ? '' : '<div class="overlay">❌</div>'}
+                <div class="name">${name}</div>
+            `;
+            imageGrid.appendChild(div);
+        }
+
+        function showMatchResult(result) {
+            matchResult.classList.remove('hidden', 'matched', 'no-match');
+
+            if (result.status === 'matched') {
+                matchResult.classList.add('matched');
+                matchResult.querySelector('.match-name').textContent = `✓ ${result.user.name}`;
+                matchResult.querySelector('.match-confidence').textContent =
+                    `Confidence: ${result.confidence.toFixed(1)}%`;
+
+                videoWrapper.classList.remove('no-match');
+                videoWrapper.classList.add('matched');
+            } else {
+                matchResult.classList.add('no-match');
+                matchResult.querySelector('.match-name').textContent = 'Unknown';
+                matchResult.querySelector('.match-confidence').textContent = 'No match found';
+
+                videoWrapper.classList.remove('matched');
+                videoWrapper.classList.add('no-match');
+            }
+        }
+
+        // ========== Face API ==========
+        async function initFaceApi() {
+            try {
+                verifySpinner.classList.remove('hidden');
+                setVerifyStatus('Loading models...');
+
+                console.log('🚀 Initializing Face API...');
+                const initStart = performance.now();
+
+                // Setup WASM backend
+                const wasmPath = './js/lib/';
+                if (typeof tf !== 'undefined' && tf.wasm && tf.wasm.setWasmPaths) {
+                    tf.wasm.setWasmPaths(wasmPath);
+                    await tf.setBackend('wasm');
+                    await tf.ready();
+                    console.log('⏱️ WASM backend ready');
+                } else {
+                    await faceapi.tf.setBackend('webgl');
+                    await faceapi.tf.ready();
+                    console.log('⏱️ WebGL backend ready');
+                }
+
+                // Load models based on selected detector
+                setVerifyStatus('Loading models...');
+                const detectorModel = CONFIG.detection.detectorModel;
+                console.log(`🔧 Using detector model: ${detectorModel}`);
+
+                if (detectorModel === 'ssd') {
+                    await Promise.all([
+                        faceapi.nets.ssdMobilenetv1.loadFromUri(CONFIG.modelUrl),
+                        faceapi.nets.faceLandmark68Net.loadFromUri(CONFIG.modelUrl),
+                        faceapi.nets.faceRecognitionNet.loadFromUri(CONFIG.modelUrl),
+                    ]);
+                } else if (detectorModel === 'mtcnn') {
+                    await Promise.all([
+                        faceapi.nets.mtcnn.loadFromUri(CONFIG.modelUrl),
+                        faceapi.nets.faceLandmark68Net.loadFromUri(CONFIG.modelUrl),
+                        faceapi.nets.faceRecognitionNet.loadFromUri(CONFIG.modelUrl),
+                    ]);
+                } else {
+                    await Promise.all([
+                        faceapi.nets.tinyFaceDetector.loadFromUri(CONFIG.modelUrl),
+                        faceapi.nets.faceLandmark68Net.loadFromUri(CONFIG.modelUrl),
+                        faceapi.nets.faceRecognitionNet.loadFromUri(CONFIG.modelUrl),
+                    ]);
+                }
+
+                // Warm-up
+                setVerifyStatus('Warming up...');
+                await warmupOnce();
+
+                // Initialize matcher
+                faceMatcher = new FaceMatcher({
+                    matchThreshold: CONFIG.matching.matchThreshold,
+                    highConfidenceThreshold: CONFIG.matching.highConfidenceThreshold,
+                });
+
+                const totalTime = performance.now() - initStart;
+                console.log(`✅ Face API ready in ${totalTime.toFixed(0)}ms`);
+
+                faceApiReady = true;
+                verifySpinner.classList.add('hidden');
+                setVerifyStatus('Ready! Upload reference photos to begin.', 'success');
+                updateImageCount();
+
+            } catch (error) {
+                console.error('❌ Init error:', error);
+                verifySpinner.classList.add('hidden');
+                setVerifyStatus('Error: ' + error.message, 'error');
+            }
+        }
+
+        async function warmupOnce() {
+            const dummy = document.createElement('canvas');
+            dummy.width = 160;
+            dummy.height = 120;
+            const ctx = dummy.getContext('2d');
+            ctx.fillStyle = 'black';
+            ctx.fillRect(0, 0, dummy.width, dummy.height);
+
+            if (CONFIG.detection.detectorModel === 'ssd') {
+                await faceapi.detectAllFaces(dummy, new faceapi.SsdMobilenetv1Options());
+            } else if (CONFIG.detection.detectorModel === 'mtcnn') {
+                await faceapi.detectAllFaces(dummy, new faceapi.MtcnnOptions());
+            } else {
+                await faceapi.detectAllFaces(dummy, new faceapi.TinyFaceDetectorOptions());
+            }
+        }
+
+        // ========== Image Processing ==========
+        async function processUploadedImages(files) {
+            if (!faceApiReady) {
+                setUploadStatus('Please wait for models to load...', 'error');
+                return;
+            }
+
+            uploadSpinner.classList.remove('hidden');
+            let successCount = 0;
+            let failCount = 0;
+
+            for (const file of files) {
+                if (!file.type.startsWith('image/')) continue;
+
+                setUploadStatus(`Processing: ${file.name}...`);
+
+                try {
+                    const result = await processImage(file);
+                    if (result.success) {
+                        adhocUsers.push({
+                            id: result.id,
+                            name: result.name,
+                            descriptors: [Array.from(result.descriptor)]
+                        });
+                        addImageCard(result.id, result.name, result.thumbnail, true);
+                        successCount++;
+                    } else {
+                        addImageCard(file.name, file.name, result.thumbnail, false);
+                        failCount++;
+                    }
+                } catch (error) {
+                    console.error('Error processing image:', file.name, error);
+                    failCount++;
+                }
+            }
+
+            uploadSpinner.classList.add('hidden');
+            updateImageCount();
+
+            if (successCount > 0) {
+                // Rebuild matcher with new data
+                faceMatcher.loadFromData(adhocUsers);
+                setUploadStatus(`✓ ${successCount} face(s) added${failCount > 0 ? `, ${failCount} failed` : ''}`, 'success');
+            } else {
+                setUploadStatus(`No faces detected in ${failCount} image(s)`, 'error');
+            }
+        }
+
+        async function processImage(file) {
+            return new Promise((resolve) => {
+                const reader = new FileReader();
+                reader.onload = async (e) => {
+                    const img = new Image();
+                    img.onload = async () => {
+                        try {
+                            // Create detector options based on model
+                            let detection;
+                            if (CONFIG.detection.detectorModel === 'ssd') {
+                                const options = new faceapi.SsdMobilenetv1Options({
+                                    minConfidence: CONFIG.detection.scoreThreshold
+                                });
+                                detection = await faceapi
+                                    .detectSingleFace(img, options)
+                                    .withFaceLandmarks()
+                                    .withFaceDescriptor();
+                            } else if (CONFIG.detection.detectorModel === 'mtcnn') {
+                                const options = new faceapi.MtcnnOptions({
+                                    minFaceSize: 50,
+                                    scaleFactor: 0.709
+                                });
+                                detection = await faceapi
+                                    .detectSingleFace(img, options)
+                                    .withFaceLandmarks()
+                                    .withFaceDescriptor();
+                            } else {
+                                const options = new faceapi.TinyFaceDetectorOptions({
+                                    inputSize: CONFIG.detection.inputSize,
+                                    scoreThreshold: CONFIG.detection.scoreThreshold
+                                });
+                                detection = await faceapi
+                                    .detectSingleFace(img, options)
+                                    .withFaceLandmarks()
+                                    .withFaceDescriptor();
+                            }
+
+                            if (detection) {
+                                // Generate unique ID
+                                const id = `adhoc_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+                                // Use filename without extension as name
+                                const name = file.name.replace(/\.[^/.]+$/, '');
+
+                                resolve({
+                                    success: true,
+                                    id,
+                                    name,
+                                    descriptor: detection.descriptor,
+                                    thumbnail: e.target.result
+                                });
+                            } else {
+                                resolve({
+                                    success: false,
+                                    thumbnail: e.target.result
+                                });
+                            }
+                        } catch (error) {
+                            resolve({
+                                success: false,
+                                thumbnail: e.target.result
+                            });
+                        }
+                    };
+                    img.src = e.target.result;
+                };
+                reader.readAsDataURL(file);
+            });
+        }
+
+        // ========== Camera & Detection ==========
+        async function startCamera() {
+            try {
+                startBtn.disabled = true;
+                verifySpinner.classList.remove('hidden');
+                setVerifyStatus('Starting camera...');
+
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
+                    audio: false,
+                });
+
+                video.srcObject = stream;
+
+                await new Promise((resolve) => {
+                    video.onloadedmetadata = () => {
+                        overlay.width = video.videoWidth;
+                        overlay.height = video.videoHeight;
+                        video.play();
+                        resolve();
+                    };
+                });
+
+                // Show video, hide placeholder
+                videoPlaceholder.style.display = 'none';
+                video.style.display = 'block';
+                overlay.style.display = 'block';
+
+                stopBtn.disabled = false;
+                verifySpinner.classList.add('hidden');
+                setVerifyStatus('🎥 Scanning...', 'success');
+
+                // Start detection loop
+                runDetectionLoop();
+
+            } catch (error) {
+                console.error('Camera error:', error);
+                verifySpinner.classList.add('hidden');
+                setVerifyStatus('Camera error: ' + error.message, 'error');
+                startBtn.disabled = false;
+            }
+        }
+
+        function stopCamera() {
+            isDetecting = false;
+            if (detectionLoop) {
+                cancelAnimationFrame(detectionLoop);
+                detectionLoop = null;
+            }
+
+            if (video.srcObject) {
+                const tracks = video.srcObject.getTracks();
+                tracks.forEach(track => track.stop());
+                video.srcObject = null;
+            }
+
+            video.style.display = 'none';
+            overlay.style.display = 'none';
+            videoPlaceholder.style.display = 'flex';
+            matchResult.classList.add('hidden');
+            videoWrapper.classList.remove('matched', 'no-match');
+
+            startBtn.disabled = adhocUsers.length === 0;
+            stopBtn.disabled = true;
+            setVerifyStatus('Camera stopped.', 'normal');
+        }
+
+        async function runDetectionLoop() {
+            // Create detector options based on model
+            let detectorOptions;
+            if (CONFIG.detection.detectorModel === 'ssd') {
+                detectorOptions = new faceapi.SsdMobilenetv1Options({
+                    minConfidence: CONFIG.detection.scoreThreshold
+                });
+            } else if (CONFIG.detection.detectorModel === 'mtcnn') {
+                detectorOptions = new faceapi.MtcnnOptions({
+                    minFaceSize: 50,
+                    scaleFactor: 0.709
+                });
+            } else {
+                detectorOptions = new faceapi.TinyFaceDetectorOptions({
+                    inputSize: CONFIG.detection.inputSize,
+                    scoreThreshold: CONFIG.detection.scoreThreshold
+                });
+            }
+            isDetecting = true;
+
+            const loop = async () => {
+                if (!isDetecting || video.paused || video.ended) {
+                    return;
+                }
+
+                if (video.readyState === video.HAVE_ENOUGH_DATA) {
+                    // Clear canvas
+                    overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
+
+                    const detection = await faceapi
+                        .detectSingleFace(video, detectorOptions)
+                        .withFaceLandmarks()
+                        .withFaceDescriptor();
+
+                    if (detection) {
+                        // Draw box
+                        const box = detection.detection.box;
+                        overlayCtx.strokeStyle = '#00cec9';
+                        overlayCtx.lineWidth = 3;
+                        overlayCtx.strokeRect(box.x, box.y, box.width, box.height);
+
+                        // Match
+                        const result = faceMatcher.findBestMatch(detection.descriptor);
+                        showMatchResult(result);
+                    } else {
+                        matchResult.classList.add('hidden');
+                        videoWrapper.classList.remove('matched', 'no-match');
+                    }
+                }
+
+                detectionLoop = requestAnimationFrame(loop);
+            };
+
+            loop();
+        }
+
+        function clearAll() {
+            stopCamera();
+            adhocUsers.length = 0;
+            imageGrid.innerHTML = '';
+            updateImageCount();
+            faceMatcher.clear();
+            setUploadStatus('Upload reference photos to get started', 'normal');
+            setVerifyStatus('Waiting for reference images...', 'normal');
+        }
+
+        // ========== Event Listeners ==========
+
+        // Upload zone click
+        uploadZone.addEventListener('click', () => {
+            imageInput.click();
+        });
+
+        // Drag and drop
+        uploadZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadZone.classList.add('dragover');
+        });
+
+        uploadZone.addEventListener('dragleave', () => {
+            uploadZone.classList.remove('dragover');
+        });
+
+        uploadZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadZone.classList.remove('dragover');
+            processUploadedImages(e.dataTransfer.files);
+        });
+
+        // File input change
+        imageInput.addEventListener('change', (e) => {
+            processUploadedImages(e.target.files);
+            e.target.value = '';
+        });
+
+        // Buttons
+        startBtn.addEventListener('click', startCamera);
+        stopBtn.addEventListener('click', stopCamera);
+        clearBtn.addEventListener('click', clearAll);
+
+        // Initialize on page load
+        window.addEventListener('load', () => {
+            initFaceApi();
+        });
+    </script>
+</body>
+
+</html>
