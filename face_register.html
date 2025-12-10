@@ -531,23 +531,26 @@
         const errorMessage = document.getElementById('errorMessage');
         const errorCloseBtn = document.getElementById('errorCloseBtn');
 
+        // ========== Load Settings from localStorage ==========
+        const SETTINGS_KEY = 'faceRecognitionSettings';
+        const savedSettings = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
+
         // ========== Configuration ==========
-        // 可以在这里调整各种参数
         const CONFIG = {
             // 模型路径
             modelUrl: './models',
 
-            // 检测参数
+            // 检测参数 - 从 Settings 读取
             detection: {
-                inputSize: 320,         // 检测输入尺寸：128, 160, 224, 320, 416, 512, 608
-                // 越大越精确，但越慢
-                scoreThreshold: 0.5,    // 最低置信度阈值 (0-1)
+                detectorModel: savedSettings.detection?.detectorModel || 'tiny',
+                inputSize: savedSettings.detection?.inputSize || 320,
+                scoreThreshold: savedSettings.detection?.scoreThreshold || 0.5,
             },
 
-            // 注册参数
+            // 注册参数 - 从 Settings 读取
             registration: {
-                maxCaptures: 20,            // 需要采集的帧数
-                captureInterval: 600,       // 每次采集的最小间隔（毫秒）
+                maxCaptures: savedSettings.registration?.maxCaptures || 20,
+                captureInterval: savedSettings.registration?.captureInterval || 600,
                 similarityThreshold: 0.15,  // 相似度阈值（避免重复帧）
                 consistencyThreshold: 0.4,  // 同一人判定阈值
             },
@@ -559,12 +562,14 @@
                 facingMode: 'user',
             },
 
-            // 性能参数
+            // 性能参数 - 从 Settings 读取
             performance: {
-                logTiming: true,            // 是否在控制台显示计时
-                showFPS: true,              // 是否显示 FPS
+                logTiming: true,
+                showFPS: savedSettings.performance?.showFPS !== false,
             }
         };
+
+        console.log('📋 Loaded CONFIG from settings:', CONFIG);
 
         // ========== State ==========
         const MODEL_URL = CONFIG.modelUrl;
@@ -702,11 +707,22 @@
                 timing.modelsStart = performance.now();
                 setStatus('Loading face detection models...');
 
-                await Promise.all([
-                    faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
-                    faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
-                    faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
-                ]);
+                const detectorModel = CONFIG.detection.detectorModel;
+                console.log(`🔧 Using detector model: ${detectorModel}`);
+
+                if (detectorModel === 'ssd') {
+                    await Promise.all([
+                        faceapi.nets.ssdMobilenetv1.loadFromUri(MODEL_URL),
+                        faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
+                        faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
+                    ]);
+                } else {
+                    await Promise.all([
+                        faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
+                        faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
+                        faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
+                    ]);
+                }
 
                 timing.modelsEnd = performance.now();
                 logTiming('Models loading', timing.modelsEnd - timing.modelsStart);
@@ -764,7 +780,12 @@
             const ctx = dummy.getContext('2d');
             ctx.fillStyle = 'black';
             ctx.fillRect(0, 0, dummy.width, dummy.height);
-            await faceapi.detectAllFaces(dummy, new faceapi.TinyFaceDetectorOptions());
+
+            if (CONFIG.detection.detectorModel === 'ssd') {
+                await faceapi.detectAllFaces(dummy, new faceapi.SsdMobilenetv1Options());
+            } else {
+                await faceapi.detectAllFaces(dummy, new faceapi.TinyFaceDetectorOptions());
+            }
         }
 
         async function startCamera() {
@@ -803,14 +824,24 @@
         }
 
         async function runDetectionLoop() {
-            // 使用 CONFIG 中的检测参数
-            const options = new faceapi.TinyFaceDetectorOptions({
-                inputSize: CONFIG.detection.inputSize,
-                scoreThreshold: CONFIG.detection.scoreThreshold
-            });
-            isDetecting = true;
+            // 根据设置选择检测器
+            let options;
+            const detectorModel = CONFIG.detection.detectorModel;
 
-            console.log(`🎯 Detection loop started with inputSize=${CONFIG.detection.inputSize}`);
+            if (detectorModel === 'ssd') {
+                options = new faceapi.SsdMobilenetv1Options({
+                    minConfidence: CONFIG.detection.scoreThreshold
+                });
+                console.log(`🎯 Detection loop started with SSD Mobilenet`);
+            } else {
+                options = new faceapi.TinyFaceDetectorOptions({
+                    inputSize: CONFIG.detection.inputSize,
+                    scoreThreshold: CONFIG.detection.scoreThreshold
+                });
+                console.log(`🎯 Detection loop started with TinyFaceDetector, inputSize=${CONFIG.detection.inputSize}`);
+            }
+
+            isDetecting = true;
 
             const loop = async () => {
                 if (!isDetecting || video.paused || video.ended) {
