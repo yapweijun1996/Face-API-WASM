@@ -364,15 +364,16 @@ class FaceRegistrationManager {
 
     /**
      * 检查是否与已采集的一致（同一个人）
+     *
+     * 用「最近邻」判定：只要新帧与【任意一帧】已采集帧足够接近，就算同一个人。
+     * 不能要求新帧与【每一帧】都接近——同一个人在不同角度/光照下，
+     * 早期帧与后期帧的欧氏距离很容易超过阈值(0.4)，那样后期帧会被误判为
+     * 'inconsistent' 导致注册卡死。换脸闯入者与所有已采集帧距离都会很大
+     * (通常 >0.6)，最近邻判定仍能挡住。
      */
     _isConsistent(descriptor) {
-        for (const ref of this.descriptors) {
-            const dist = this._euclideanDistance(descriptor, ref);
-            if (dist > this.config.consistencyThreshold) {
-                return false;
-            }
-        }
-        return true;
+        const minDist = this._getMinDistance(descriptor);
+        return minDist <= this.config.consistencyThreshold;
     }
 
     /**
