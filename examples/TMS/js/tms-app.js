@@ -223,12 +223,22 @@
         const raw = Array.from(output[antiSpoof.outputName].data).slice(0, 3);
         const prob = softmax(raw);
         const label = prob.indexOf(Math.max(...prob));
+        const realScore = prob[LIVENESS_REAL_CLASS_INDEX];
+        const passed = label === LIVENESS_REAL_CLASS_INDEX && realScore >= LIVENESS_LIVE_THRESHOLD;
+        console.log('Liveness Debug:', {
+            raw: raw.map(v => Number(v.toFixed(4))),
+            prob: prob.map(v => Number(v.toFixed(4))),
+            label,
+            realScore: Number(realScore.toFixed(4)),
+            threshold: LIVENESS_LIVE_THRESHOLD,
+            passed
+        });
         return {
-            live: prob[LIVENESS_REAL_CLASS_INDEX],
+            live: realScore,
             print: prob[0],
             replay: prob[2],
             label,
-            passed: label === LIVENESS_REAL_CLASS_INDEX && prob[LIVENESS_REAL_CLASS_INDEX] >= LIVENESS_LIVE_THRESHOLD
+            passed
         };
     }
 
@@ -595,9 +605,9 @@
         el.clockHint.textContent = '';
     }
 
-    function buildAvatar(initial, cls, photo) {
+    function buildAvatar(initial, cls, photo, baseClass = 'clock-avatar') {
         const a = document.createElement('div');
-        a.className = 'clock-avatar ' + cls;
+        a.className = cls ? baseClass + ' ' + cls : baseClass;
         if (photo) {
             const img = document.createElement('img');
             img.src = photo;          // dataURL，.src 赋值不会执行脚本
@@ -783,15 +793,7 @@
             const row = document.createElement('div');
             row.className = 'emp-row';
 
-            const av = document.createElement('div');
-            av.className = 'emp-avatar';
-            if (emp.photo) {
-                const img = document.createElement('img');
-                img.src = emp.photo;
-                av.appendChild(img);
-            } else {
-                av.textContent = (emp.name || '?').charAt(0).toUpperCase();
-            }
+            const av = buildAvatar((emp.name || '?').charAt(0).toUpperCase(), '', emp.photo, 'emp-avatar');
 
             const info = document.createElement('div');
             info.className = 'emp-info';
@@ -932,7 +934,7 @@
                 el.clockOverlay.height = el.clockVideo.videoHeight;
                 startLoop(el.clockOverlay);
             } catch (e) {
-                el.clockHint.textContent = '无法访问摄像头：' + e.message;
+                el.clockHint.textContent = I18N.t('camera_error', { msg: e.message });
             }
         } else if (tab === 'records') {
             await renderRecords();
@@ -982,10 +984,7 @@
             const emp = empMap.get(r.employeeId);
             const row = document.createElement('div');
             row.className = 'whos-in-row';
-            const av = document.createElement('div');
-            av.className = 'emp-avatar';
-            if (emp && emp.photo) { const img = document.createElement('img'); img.src = emp.photo; av.appendChild(img); }
-            else av.textContent = (r.employeeName || '?').charAt(0).toUpperCase();
+            const av = buildAvatar((r.employeeName || '?').charAt(0).toUpperCase(), '', emp && emp.photo, 'emp-avatar');
             const info = document.createElement('div'); info.className = 'emp-info';
             const n = document.createElement('div'); n.className = 'emp-name'; n.textContent = r.employeeName;
             info.appendChild(n);
