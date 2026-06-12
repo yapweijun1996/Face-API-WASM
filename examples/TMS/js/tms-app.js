@@ -37,8 +37,8 @@
     // 实时打卡（自动）+ 活体检测状态
     const HOLD_MS = 1500;             // 对准保持多久自动打卡
     const BLINK_EAR = 0.21;           // 眼睛纵横比低于此值视为闭眼（眨眼）
-    let lastClockDet = null;          // 最近一帧 clock 检测结果（用于逐帧画环）
-    let holdState = null;             // { id, name, action, startTs, blinked, conf }
+    let lastClockDets = [];          // 最近一帧所有检测到的脸：[{ box, match }]（多人）
+    const holdStates = new Map();    // empId -> 每张脸独立的 hold 状态
     let particles = [];              // 打卡成功的庆祝粒子
 
     const detectorOptions = () => new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.5 });
@@ -197,16 +197,19 @@
             if (!busy && ts - lastRun > interval && activeVideo.readyState === activeVideo.HAVE_ENOUGH_DATA) {
                 busy = true; lastRun = ts;
                 try {
-                    const det = await faceapi
-                        .detectSingleFace(activeVideo, detectorOptions())
-                        .withFaceLandmarks()
-                        .withFaceDescriptor();
-
                     if (appMode === 'clock') {
-                        lastClockDet = det || null;
-                        if (det) await handleClockFrame(det);   // await：避免 busy 提前释放导致重入/重复打卡
-                        else { holdState = null; showClockIdle(); }
+                        // 多人：一次检测画面中所有人脸
+                        const dets = await faceapi
+                            .detectAllFaces(activeVideo, detectorOptions())
+                            .withFaceLandmarks()
+                            .withFaceDescriptors();
+                        await handleClockFrameMulti(dets || []);   // await：避免 busy 提前释放导致重入/重复打卡
                     } else if (appMode === 'enroll') {
+                        // 注册仍只取单张脸
+                        const det = await faceapi
+                            .detectSingleFace(activeVideo, detectorOptions())
+                            .withFaceLandmarks()
+                            .withFaceDescriptor();
                         if (ctx) drawBox(ctx, overlay, det);
                         if (det) handleEnrollFrame(det);
                     }
@@ -285,25 +288,31 @@
     function drawClockOverlay(ctx, overlay) {
         ctx.clearRect(0, 0, overlay.width, overlay.height);
         drawParticles(ctx);          // 粒子始终绘制（即使人脸已离开）
-        const det = lastClockDet;
-        if (!det) return;
+        for (const item of lastClockDets) {
+            drawFace(ctx, overlay, item.box, item.match);
+        }
+    }
 
-        const b = det.detection.box;
+    // 画单张脸：人脸框 +（若已识别）姓名标签 + 倒计时环 + 提示
+    function drawFace(ctx, overlay, b, match) {
         const x = overlay.width - b.x - b.width;     // 翻转 x 对齐镜像视频
         const y = b.y;
+        const hs = match ? holdStates.get(match.emp.id) : null;
 
-        const inCooldown = holdState && holdState.phase === 'done';
-        const color = inCooldown ? '#22c55e' : (holdState ? (holdState.action === 'in' ? '#22c55e' : '#f43f5e') : '#22d3ee');
+        const done = hs && hs.phase === 'done';
+        const color = !match ? 'rgba(148,163,184,.75)'         // 未识别：灰
+            : done ? '#22c55e'
+                : (hs && hs.action === 'in' ? '#22c55e' : '#f43f5e');
 
         // 人脸框
         ctx.strokeStyle = color;
         ctx.lineWidth = 3;
         ctx.strokeRect(x, y, b.width, b.height);
 
-        if (!holdState) return;
+        if (!match) return;          // 未识别的脸只画灰框
 
         // 姓名标签（canvas 未镜像，文字可正常阅读）
-        const label = holdState.name;
+        const label = match.emp.name;
         ctx.font = '600 18px -apple-system, "PingFang SC", sans-serif';
         const tw = ctx.measureText(label).width;
         ctx.fillStyle = 'rgba(15,23,42,.85)';
@@ -311,20 +320,22 @@
         ctx.fillStyle = '#fff';
         ctx.fillText(label, x + 8, y - 11);
 
+        if (!hs) return;
+
         // 倒计时环（人脸右上角）
         const cx = x + b.width + 4, cy = y + 18, rad = 16;
         let prog = 0, hint = '';
-        if (holdState.phase === 'done') { prog = 1; }
-        else if (!holdState.blinked) { prog = 0.15; hint = I18N.t('liveness_blink'); }
+        if (hs.phase === 'done') { prog = 1; }
+        else if (!hs.blinked) { prog = 0.15; hint = I18N.t('liveness_blink'); }
         else {
-            prog = Math.min(1, (performance.now() - holdState.startTs) / HOLD_MS);
-            hint = I18N.t(holdState.action === 'in' ? 'clock_in_btn' : 'clock_out_btn');
+            prog = Math.min(1, (performance.now() - hs.startTs) / HOLD_MS);
+            hint = I18N.t(hs.action === 'in' ? 'clock_in_btn' : 'clock_out_btn');
         }
         ctx.beginPath(); ctx.arc(cx, cy, rad, 0, Math.PI * 2);
         ctx.strokeStyle = 'rgba(255,255,255,.25)'; ctx.lineWidth = 4; ctx.stroke();
         ctx.beginPath(); ctx.arc(cx, cy, rad, -Math.PI / 2, -Math.PI / 2 + prog * Math.PI * 2);
         ctx.strokeStyle = color; ctx.lineWidth = 4; ctx.lineCap = 'round'; ctx.stroke();
-        if (holdState.phase === 'done') {
+        if (hs.phase === 'done') {
             ctx.fillStyle = color; ctx.font = '700 16px sans-serif'; ctx.fillText('✓', cx - 5, cy + 6);
         }
 
@@ -340,61 +351,95 @@
     }
 
     // ============================================================
-    // 打卡识别
+    // 打卡识别（多人同时）
     // ============================================================
-    async function handleClockFrame(det) {
-        const result = matcher.findBestMatch(det.descriptor);
-        if (result.status !== 'matched') {
-            holdState = null;
+    async function handleClockFrameMulti(dets) {
+        const present = new Set();
+        const drawList = [];
+        let primary = null;          // 画面里最大的已识别人脸，用于侧边卡片
+
+        for (const det of dets) {
+            const box = det.detection.box;
+            const result = matcher ? matcher.findBestMatch(det.descriptor) : { status: 'unknown' };
+
+            if (result.status !== 'matched') {
+                drawList.push({ box, match: null });
+                continue;
+            }
+
+            const emp = result.user;
+            present.add(emp.id);
+            drawList.push({ box, match: { emp, confidence: result.confidence } });
+
+            if (!primary || box.width * box.height > primary.box.width * primary.box.height) {
+                primary = { emp, confidence: result.confidence, box };
+            }
+
+            // 冷却中：刚打过卡，保持 done 态展示 ✓
+            const last = cooldown.get(emp.id);
+            if (last && Date.now() - last < settings.clockCooldownMs) {
+                const prev = holdStates.get(emp.id);
+                holdStates.set(emp.id, {
+                    id: emp.id, name: emp.name,
+                    action: prev ? prev.action : 'in',
+                    phase: 'done', blinked: true, startTs: 0, lastSeen: performance.now()
+                });
+                continue;
+            }
+
+            // 每张脸独立的 hold 状态
+            let hs = holdStates.get(emp.id);
+            if (!hs || hs.phase === 'done') {
+                const lastRec = await tmsDB.getLastAttendance(emp.id);
+                const nextType = lastRec && lastRec.type === 'in' ? 'out' : 'in';
+                hs = { id: emp.id, name: emp.name, action: nextType, startTs: performance.now(), blinked: false, phase: 'hold', lastSeen: performance.now() };
+                holdStates.set(emp.id, hs);
+            }
+            hs.lastSeen = performance.now();
+
+            // 活体：检测到一次闭眼即通过，通过后重置正式倒计时
+            if (!hs.blinked && blinkNow(det)) { hs.blinked = true; hs.startTs = performance.now(); }
+
+            // 已眨眼 + 保持足够时长 → 自动打卡
+            if (hs.blinked && performance.now() - hs.startTs >= HOLD_MS) {
+                hs.phase = 'done';
+                await doClock(emp, hs.action, box);
+            }
+        }
+
+        lastClockDets = drawList;
+
+        // 清理离开画面超过 1.2s 的 hold 状态（容忍偶发漏检，不会一帧丢失就重置倒计时）
+        for (const [id, hs] of holdStates) {
+            if (!present.has(id) && performance.now() - (hs.lastSeen || 0) > 1200) holdStates.delete(id);
+        }
+
+        // 侧边卡片：展示最大的已识别人脸
+        if (primary) {
+            const hs = holdStates.get(primary.emp.id);
+            const phase = hs ? (hs.phase === 'done' ? 'done' : (hs.blinked ? 'holding' : 'blink')) : 'holding';
+            renderClockStatus(primary.emp, primary.confidence, phase, hs);
+        } else if (dets.length) {
             showClockNoMatch();
-            return;
-        }
-        const emp = result.user;
-
-        // 冷却中：刚打过卡
-        const last = cooldown.get(emp.id);
-        if (last && Date.now() - last < settings.clockCooldownMs) {
-            holdState = { id: emp.id, name: emp.name, action: 'in', phase: 'done', blinked: true, startTs: 0 };
-            renderClockStatus(emp, result.confidence, 'done');
-            return;
-        }
-
-        // 维护 hold：换人则重置计时
-        if (!holdState || holdState.id !== emp.id || holdState.phase === 'done') {
-            const lastRec = await tmsDB.getLastAttendance(emp.id);
-            const nextType = lastRec && lastRec.type === 'in' ? 'out' : 'in';
-            holdState = { id: emp.id, name: emp.name, action: nextType, startTs: performance.now(), blinked: false, phase: 'hold' };
-        }
-
-        // 活体：检测到一次闭眼即视为通过；通过后重置计时，开始正式倒计时
-        if (!holdState.blinked && blinkNow(det)) {
-            holdState.blinked = true;
-            holdState.startTs = performance.now();
-        }
-
-        renderClockStatus(emp, result.confidence, holdState.blinked ? 'holding' : 'blink');
-
-        // 满足：已眨眼 + 保持足够时长 → 自动打卡
-        if (holdState.blinked && performance.now() - holdState.startTs >= HOLD_MS) {
-            const action = holdState.action;
-            holdState.phase = 'done';
-            await doClock(emp, action);
+        } else {
+            showClockIdle();
         }
     }
 
-    function renderClockStatus(emp, confidence, phase) {
+    function renderClockStatus(emp, confidence, phase, hs) {
         const key = emp.id + ':' + phase;
         if (key === lastClockKey) return;
         lastClockKey = key;
 
         const initial = (emp.name || '?').charAt(0).toUpperCase();
         const photo = empPhotos.get(emp.id);
-        const cls = phase === 'done' ? 'ok' : (holdState && holdState.action === 'in' ? 'in' : 'out');
+        const action = hs ? hs.action : 'in';
+        const cls = phase === 'done' ? 'ok' : (action === 'in' ? 'in' : 'out');
 
         let sub;
         if (phase === 'done') sub = I18N.t('clock_recorded', { c: confidence.toFixed(0) });
         else if (phase === 'blink') sub = I18N.t('liveness_blink');
-        else sub = I18N.t(holdState && holdState.action === 'in' ? 'hold_to_in' : 'hold_to_out');
+        else sub = I18N.t(action === 'in' ? 'hold_to_in' : 'hold_to_out');
 
         el.clockCard.innerHTML = '';
         el.clockCard.append(buildAvatar(initial, cls, photo), buildText(emp.name, sub));
@@ -443,28 +488,26 @@
         return 'ontime';
     }
 
-    async function doClock(emp, type) {
+    async function doClock(emp, type, box) {
         lastClockKey = null;
         const status = computeStatus(type, Date.now());
-        // handleClockFrame 现在是被 await 的，这里不会有并发重入；
-        // 写库成功后再置冷却 + 反馈，写失败则回退状态让用户可重试。
+        // handleClockFrameMulti 是被 await 的，这里不会并发重入；
+        // 写库成功后再置冷却 + 反馈，写失败则回退该员工的 hold 让其可重试。
         try {
             await tmsDB.addAttendance({ employeeId: emp.id, employeeName: emp.name, type, status });
         } catch (e) {
-            holdState = null;   // 允许下一轮重新对准重试
+            holdStates.delete(emp.id);   // 仅回退该员工，不影响画面里其他人
             toast(I18N.t('clock_fail', { msg: e.message }), 'err');
             return;
         }
         cooldown.set(emp.id, Date.now());
-        // 从人脸位置迸发庆祝粒子（坐标翻转对齐镜像视频）
-        if (lastClockDet && el.clockOverlay) {
-            const b = lastClockDet.detection.box;
-            spawnCelebration(el.clockOverlay.width - b.x - b.width / 2, b.y + b.height / 2, type);
+        // 从这张脸的位置迸发庆祝粒子（坐标翻转对齐镜像视频）
+        if (box && el.clockOverlay) {
+            spawnCelebration(el.clockOverlay.width - box.x - box.width / 2, box.y + box.height / 2, type);
         }
         beep(type === 'in' ? 880 : 520);
         speak(I18N.t(type === 'in' ? 'voice_in' : 'voice_out', { name: emp.name }));
         toast(I18N.t(type === 'in' ? 'toast_clock_in' : 'toast_clock_out', { name: emp.name }), 'ok');
-        renderClockStatus(emp, 100, 'done');
         await renderRecords();
     }
 
@@ -843,6 +886,8 @@
     // UI 事件绑定
     // ============================================================
     function wireUi() {
+        // 设置写 localStorage 失败时（隐私模式/配额满）提示用户：本次会话生效，刷新后丢失
+        tmsDB.onPersistError = () => toast(I18N.t('settings_save_fail'), 'err');
         document.querySelectorAll('[data-tab]').forEach(btn => {
             btn.addEventListener('click', () => switchTab(btn.dataset.tab));
         });

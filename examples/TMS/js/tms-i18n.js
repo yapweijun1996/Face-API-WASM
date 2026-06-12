@@ -80,6 +80,7 @@ const I18N = (() => {
             no_records: 'No records',
             sensitivity_title: '⚙️ Recognition sensitivity',
             threshold_label: 'Match threshold {v} (lower = stricter)',
+            settings_save_fail: 'Settings apply for this session only — saving failed (private mode or storage full)',
             dash: '—'
         },
         zh: {
@@ -149,6 +150,7 @@ const I18N = (() => {
             no_records: '暂无记录',
             sensitivity_title: '⚙️ 识别灵敏度',
             threshold_label: '匹配阈值 {v}（越小越严格）',
+            settings_save_fail: '设置仅本次会话生效——保存失败（隐私模式或存储已满）',
             dash: '—'
         }
     };

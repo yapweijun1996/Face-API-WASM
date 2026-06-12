@@ -30,6 +30,9 @@ const DEFAULT_SETTINGS = {
 class TmsDB {
     constructor() {
         this.db = null;
+        // localStorage 持久化失败时的回调（如 Safari 隐私模式 / 配额满），
+        // 由 UI 层赋值用来提示用户；不赋值则只 console.warn。
+        this.onPersistError = null;
     }
 
     async init() {
@@ -75,12 +78,16 @@ class TmsDB {
     async saveEmployee(emp) {
         await this.init();
         if (!emp || !emp.id) throw new Error('employee.id required');
+        // 描述符统一存 Float32Array：结构化克隆按 4 字节/元素存，
+        // 比普通 number 数组（8 字节/元素 + 对象开销）省一半以上空间。
+        // FaceMatcher 读取时两种形式都兼容，旧记录无需迁移。
+        const toF32 = (d) => (d instanceof Float32Array ? d : new Float32Array(d));
         const data = {
             id: String(emp.id),
             name: emp.name != null ? String(emp.name) : String(emp.id),
             department: emp.department || '',
-            descriptors: emp.descriptors || [],
-            meanDescriptor: emp.meanDescriptor || null,
+            descriptors: (emp.descriptors || []).map(toF32),
+            meanDescriptor: emp.meanDescriptor ? toF32(emp.meanDescriptor) : null,
             photo: emp.photo || null,           // 注册时抓取的脸部缩略图（dataURL）
             enrolledAt: emp.enrolledAt || Date.now()
         };
@@ -161,6 +168,7 @@ class TmsDB {
             localStorage.setItem(SETTINGS_KEY, JSON.stringify(next));
         } catch (e) {
             console.warn('TMS: failed to persist settings', e);
+            if (typeof this.onPersistError === 'function') this.onPersistError(e);
         }
         return next;
     }
