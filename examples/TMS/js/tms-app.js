@@ -56,12 +56,13 @@
 
     const detectorOptions = () => new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.5 });
 
-    // MiniFASNet-V2 ONNX anti-spoofing: input 1x3x80x80 BGR float32 [0,1].
-    // ONNX export returns [live, print-attack, replay-attack].
-    const LIVENESS_MODEL_URL = './models/minifasnet_v2.onnx';
-    const LIVENESS_REAL_CLASS_INDEX = 0;
+    // MiniFASNet-V1SE ONNX anti-spoofing: input 1x3x80x80 BGR float32 [0,1].
+    // Upstream Silent-Face-Anti-Spoofing treats argmax class 1 as Real Face.
+    const LIVENESS_MODEL_NAME = 'MiniFASNetV1SE';
+    const LIVENESS_MODEL_URL = './models/MiniFASNetV1SE.onnx';
+    const LIVENESS_REAL_CLASS_INDEX = 1;
     const LIVENESS_LIVE_THRESHOLD = 0.50;
-    const LIVENESS_CROP_SCALE = 1.55;
+    const LIVENESS_CROP_SCALE = 4.0;
     const antiSpoof = {
         session: null,
         loading: null,
@@ -263,6 +264,8 @@
         const realScore = prob[LIVENESS_REAL_CLASS_INDEX];
         const passed = label === LIVENESS_REAL_CLASS_INDEX && realScore >= LIVENESS_LIVE_THRESHOLD;
         console.log('Liveness Debug:', {
+            model: LIVENESS_MODEL_NAME,
+            cropScale: LIVENESS_CROP_SCALE,
             raw: raw.map(v => Number(v.toFixed(4))),
             prob: prob.map(v => Number(v.toFixed(4))),
             label,
@@ -580,9 +583,9 @@
                     if (await doClock(emp, d.action, box)) {
                         justClocked = matchedFaces[matchedFaces.length - 1];
                     } else {
-                        // 写库失败 → 回退该 track，使其下一轮重新倒计时打卡（保留已通过的活体）
+                        // 写库失败 → 回退该 track，下帧重新倒计时；保留 clockedThisFrame 锁，
+                        // 防止同帧第二张同员工脸再次触发写入（两次失败写入没有意义）。
                         d.phase = 'hold'; d.startTs = now;
-                        clockedThisFrame.delete(emp.id);
                     }
                 }
             }
