@@ -40,6 +40,7 @@
     let lastClockDets = [];          // 最近一帧所有检测到的脸：[{ box, match }]（多人）
     const holdStates = new Map();    // empId -> 每张脸独立的 hold 状态
     let particles = [];              // 打卡成功的庆祝粒子
+    let lastPrimaryId = null;        // 侧边卡片当前展示的员工（用于迟滞，避免抖动）
 
     const detectorOptions = () => new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.5 });
 
@@ -148,6 +149,9 @@
             meanDescriptor: e.meanDescriptor
         })));
         empPhotos = new Map(employees.map(e => [e.id, e.photo]));
+        // 清理已删除员工残留的冷却/hold 记录，避免随增删循环无限增长
+        for (const id of [...cooldown.keys()]) if (!empPhotos.has(id)) cooldown.delete(id);
+        for (const id of [...holdStates.keys()]) if (!empPhotos.has(id)) holdStates.delete(id);
         el.empCountPill.textContent = I18N.t('emp_count', { n: employees.length });
         return employees;
     }
@@ -173,6 +177,14 @@
         if (loopHandle) { cancelAnimationFrame(loopHandle); loopHandle = null; }
         if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
         if (activeVideo) { activeVideo.srcObject = null; activeVideo = null; }
+        // 清空逐帧的临时状态，避免下次开摄像头时：
+        //  - 用旧坐标画出残影框（overlay 尺寸可能已变）
+        //  - 冻结的 hold（旧 startTs）在回到打卡页第一帧就「秒打卡」并绕过活体
+        holdStates.clear();
+        lastClockDets = [];
+        particles = [];
+        lastClockKey = null;
+        lastPrimaryId = null;
     }
 
     // ============================================================
@@ -252,6 +264,7 @@
     // ---------- clock 实时叠加层：人脸框 + 姓名 + 倒计时环 + 提示 ----------
     // ---------- 打卡成功庆祝粒子 ----------
     function spawnCelebration(cx, cy, type) {
+        if (particles.length > 320) return;   // 多人同时打卡时给粒子数封顶
         const palette = type === 'in'
             ? ['#22c55e', '#4ade80', '#22d3ee', '#a3e635']
             : ['#f43f5e', '#fb7185', '#22d3ee', '#fbbf24'];
@@ -355,8 +368,10 @@
     // ============================================================
     async function handleClockFrameMulti(dets) {
         const present = new Set();
+        const processed = new Set();   // 本帧已处理的 empId，挡住「同一人被两张脸匹配」导致的重复打卡
         const drawList = [];
-        let primary = null;          // 画面里最大的已识别人脸，用于侧边卡片
+        const matchedFaces = [];       // 已识别的脸，用于挑选侧边卡片
+        let justClocked = null;        // 本帧刚打卡成功者，卡片优先展示其 ✓
 
         for (const det of dets) {
             const box = det.detection.box;
@@ -370,10 +385,11 @@
             const emp = result.user;
             present.add(emp.id);
             drawList.push({ box, match: { emp, confidence: result.confidence } });
+            matchedFaces.push({ emp, confidence: result.confidence, box });
 
-            if (!primary || box.width * box.height > primary.box.width * primary.box.height) {
-                primary = { emp, confidence: result.confidence, box };
-            }
+            // 同一人本帧已处理过（照片/双胞胎/反射造成的第二张脸）→ 只画框，不再推进 hold
+            if (processed.has(emp.id)) continue;
+            processed.add(emp.id);
 
             // 冷却中：刚打过卡，保持 done 态展示 ✓
             const last = cooldown.get(emp.id);
@@ -382,7 +398,7 @@
                 holdStates.set(emp.id, {
                     id: emp.id, name: emp.name,
                     action: prev ? prev.action : 'in',
-                    phase: 'done', blinked: true, startTs: 0, lastSeen: performance.now()
+                    phase: 'done', blinked: true, eyesOpenSeen: true, startTs: 0, lastSeen: performance.now()
                 });
                 continue;
             }
@@ -392,18 +408,23 @@
             if (!hs || hs.phase === 'done') {
                 const lastRec = await tmsDB.getLastAttendance(emp.id);
                 const nextType = lastRec && lastRec.type === 'in' ? 'out' : 'in';
-                hs = { id: emp.id, name: emp.name, action: nextType, startTs: performance.now(), blinked: false, phase: 'hold', lastSeen: performance.now() };
+                hs = { id: emp.id, name: emp.name, action: nextType, startTs: performance.now(), blinked: false, eyesOpenSeen: false, phase: 'hold', lastSeen: performance.now() };
                 holdStates.set(emp.id, hs);
             }
             hs.lastSeen = performance.now();
 
-            // 活体：检测到一次闭眼即通过，通过后重置正式倒计时
-            if (!hs.blinked && blinkNow(det)) { hs.blinked = true; hs.startTs = performance.now(); }
+            // 活体：必须先看到「睁眼」再看到「闭眼」才算一次真眨眼——
+            // 静态照片要么一直睁、要么一直闭，无法产生「睁→闭」跳变，骗不过。
+            if (!hs.blinked) {
+                const closed = blinkNow(det);
+                if (!closed) hs.eyesOpenSeen = true;
+                else if (hs.eyesOpenSeen) { hs.blinked = true; hs.startTs = performance.now(); }
+            }
 
             // 已眨眼 + 保持足够时长 → 自动打卡
             if (hs.blinked && performance.now() - hs.startTs >= HOLD_MS) {
                 hs.phase = 'done';
-                await doClock(emp, hs.action, box);
+                if (await doClock(emp, hs.action, box)) justClocked = { emp, confidence: result.confidence };
             }
         }
 
@@ -414,14 +435,25 @@
             if (!present.has(id) && performance.now() - (hs.lastSeen || 0) > 1200) holdStates.delete(id);
         }
 
-        // 侧边卡片：展示最大的已识别人脸
-        if (primary) {
-            const hs = holdStates.get(primary.emp.id);
+        // 侧边卡片：优先展示刚打卡成功者；否则展示「上一个 primary（若仍在画面）」或最大的脸（迟滞，避免两张相近大小的脸来回抖动）
+        let target = justClocked;
+        if (!target && matchedFaces.length) {
+            const sticky = matchedFaces.find(f => f.emp.id === lastPrimaryId);
+            const biggest = matchedFaces.reduce((a, b) => (b.box.width * b.box.height > a.box.width * a.box.height ? b : a));
+            // 仅当别的脸明显更大（>1.3x）才切换，否则保持上一个
+            target = (sticky && biggest.box.width * biggest.box.height < sticky.box.width * sticky.box.height * 1.3) ? sticky : biggest;
+        }
+
+        if (target) {
+            lastPrimaryId = target.emp.id;
+            const hs = holdStates.get(target.emp.id);
             const phase = hs ? (hs.phase === 'done' ? 'done' : (hs.blinked ? 'holding' : 'blink')) : 'holding';
-            renderClockStatus(primary.emp, primary.confidence, phase, hs);
+            renderClockStatus(target.emp, target.confidence, phase, hs);
         } else if (dets.length) {
+            lastPrimaryId = null;
             showClockNoMatch();
         } else {
+            lastPrimaryId = null;
             showClockIdle();
         }
     }
@@ -498,7 +530,7 @@
         } catch (e) {
             holdStates.delete(emp.id);   // 仅回退该员工，不影响画面里其他人
             toast(I18N.t('clock_fail', { msg: e.message }), 'err');
-            return;
+            return false;
         }
         cooldown.set(emp.id, Date.now());
         // 从这张脸的位置迸发庆祝粒子（坐标翻转对齐镜像视频）
@@ -508,7 +540,11 @@
         beep(type === 'in' ? 880 : 520);
         speak(I18N.t(type === 'in' ? 'voice_in' : 'voice_out', { name: emp.name }));
         toast(I18N.t(type === 'in' ? 'toast_clock_in' : 'toast_clock_out', { name: emp.name }), 'ok');
-        await renderRecords();
+        // 只有当记录/看板页正在显示时才即时刷新，避免在打卡热路径上做整库 getAll + 重建 DOM 造成卡顿；
+        // 切到这些标签时 switchTab 会自行刷新。
+        if (document.getElementById('panel-records').classList.contains('show')) renderRecords();
+        if (document.getElementById('panel-dashboard').classList.contains('show')) renderDashboard();
+        return true;
     }
 
     // ---------- 声音 / 语音 ----------
