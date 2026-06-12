@@ -39,6 +39,7 @@
     const BLINK_EAR = 0.21;           // 眼睛纵横比低于此值视为闭眼（眨眼）
     let lastClockDet = null;          // 最近一帧 clock 检测结果（用于逐帧画环）
     let holdState = null;             // { id, name, action, startTs, blinked, conf }
+    let particles = [];              // 打卡成功的庆祝粒子
 
     const detectorOptions = () => new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.5 });
 
@@ -246,8 +247,44 @@
     }
 
     // ---------- clock 实时叠加层：人脸框 + 姓名 + 倒计时环 + 提示 ----------
+    // ---------- 打卡成功庆祝粒子 ----------
+    function spawnCelebration(cx, cy, type) {
+        const palette = type === 'in'
+            ? ['#22c55e', '#4ade80', '#22d3ee', '#a3e635']
+            : ['#f43f5e', '#fb7185', '#22d3ee', '#fbbf24'];
+        for (let i = 0; i < 40; i++) {
+            const ang = Math.random() * Math.PI * 2;
+            const speed = 2 + Math.random() * 6;
+            particles.push({
+                x: cx, y: cy,
+                vx: Math.cos(ang) * speed,
+                vy: Math.sin(ang) * speed - 2,   // 略向上
+                life: 1,
+                size: 2 + Math.random() * 4,
+                color: palette[(Math.random() * palette.length) | 0]
+            });
+        }
+    }
+
+    function drawParticles(ctx) {
+        if (!particles.length) return;
+        particles = particles.filter(p => p.life > 0);
+        for (const p of particles) {
+            p.vy += 0.22;            // 重力
+            p.x += p.vx; p.y += p.vy;
+            p.life -= 0.022;
+            ctx.globalAlpha = Math.max(0, p.life);
+            ctx.fillStyle = p.color;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+    }
+
     function drawClockOverlay(ctx, overlay) {
         ctx.clearRect(0, 0, overlay.width, overlay.height);
+        drawParticles(ctx);          // 粒子始终绘制（即使人脸已离开）
         const det = lastClockDet;
         if (!det) return;
 
@@ -419,6 +456,11 @@
             return;
         }
         cooldown.set(emp.id, Date.now());
+        // 从人脸位置迸发庆祝粒子（坐标翻转对齐镜像视频）
+        if (lastClockDet && el.clockOverlay) {
+            const b = lastClockDet.detection.box;
+            spawnCelebration(el.clockOverlay.width - b.x - b.width / 2, b.y + b.height / 2, type);
+        }
         beep(type === 'in' ? 880 : 520);
         speak(I18N.t(type === 'in' ? 'voice_in' : 'voice_out', { name: emp.name }));
         toast(I18N.t(type === 'in' ? 'toast_clock_in' : 'toast_clock_out', { name: emp.name }), 'ok');
