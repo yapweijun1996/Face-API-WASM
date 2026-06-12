@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no" />
+<meta name="theme-color" content="#0f172a" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Face TMS" />
+<link rel="manifest" href="./manifest.webmanifest" />
+<link rel="apple-touch-icon" href="./icon.svg" />
+<link rel="icon" href="./icon.svg" type="image/svg+xml" />
+<title>Face TMS — 人脸考勤系统</title>
+<style>
+    :root {
+        --bg: #0f172a;
+        --bg2: #1e293b;
+        --card: #1e293b;
+        --line: #334155;
+        --text: #e2e8f0;
+        --muted: #94a3b8;
+        --accent: #22d3ee;
+        --in: #22c55e;
+        --out: #f43f5e;
+        --safe-top: env(safe-area-inset-top, 0px);
+        --safe-bot: env(safe-area-inset-bottom, 0px);
+    }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { margin: 0; height: 100%; }
+    body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+        background: linear-gradient(160deg, var(--bg), #0b1120);
+        color: var(--text);
+        display: flex; flex-direction: column;
+        min-height: 100vh;
+    }
+    header {
+        padding: calc(12px + var(--safe-top)) 16px 12px;
+        display: flex; align-items: center; gap: 10px;
+        border-bottom: 1px solid var(--line);
+        background: rgba(15, 23, 42, 0.8); backdrop-filter: blur(8px);
+        position: sticky; top: 0; z-index: 20;
+    }
+    header h1 { font-size: 18px; margin: 0; font-weight: 700; }
+    header .logo { font-size: 22px; }
+    header .pill { margin-left: auto; font-size: 12px; color: var(--muted); border: 1px solid var(--line); padding: 4px 10px; border-radius: 999px; }
+
+    main { flex: 1; width: 100%; max-width: 920px; margin: 0 auto; padding: 16px; }
+
+    .panel { display: none; animation: fade .2s ease; }
+    .panel.show { display: block; }
+    @keyframes fade { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+    /* ---------- 摄像头 ---------- */
+    .stage {
+        position: relative; width: 100%; aspect-ratio: 4 / 3;
+        background: #000; border-radius: 16px; overflow: hidden;
+        border: 1px solid var(--line);
+    }
+    .stage video, .stage canvas {
+        position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover;
+        transform: scaleX(-1);   /* 镜像，更自然 */
+    }
+    .stage canvas { pointer-events: none; }
+
+    /* ---------- 打卡卡片 ---------- */
+    .clock-hint { text-align: center; color: var(--muted); margin: 14px 0; min-height: 20px; }
+    .clock-card {
+        display: none; flex-direction: column; align-items: center; gap: 14px;
+        background: var(--card); border: 1px solid var(--line); border-radius: 16px;
+        padding: 20px; margin-top: 14px;
+    }
+    .clock-card.show { display: flex; animation: fade .2s; }
+    .clock-avatar {
+        width: 84px; height: 84px; border-radius: 50%; display: grid; place-items: center;
+        font-size: 36px; font-weight: 700; color: #001; background: var(--accent);
+    }
+    .clock-avatar.in { background: var(--in); }
+    .clock-avatar.out { background: var(--out); color: #fff; }
+    .clock-avatar.ok { background: var(--in); }
+    .clock-meta { text-align: center; }
+    .clock-name { font-size: 22px; font-weight: 700; }
+    .clock-sub { color: var(--muted); font-size: 13px; margin-top: 2px; }
+    .clock-action {
+        width: 100%; max-width: 340px; padding: 16px; font-size: 18px; font-weight: 700;
+        border: none; border-radius: 14px; color: #fff; cursor: pointer;
+    }
+    .clock-action.in { background: var(--in); }
+    .clock-action.out { background: var(--out); }
+    .clock-action:active { transform: scale(.98); }
+    .clock-badge { font-size: 18px; font-weight: 700; }
+    .clock-badge.ok { color: var(--in); }
+
+    /* ---------- 员工 ---------- */
+    .field { margin-bottom: 12px; }
+    .field label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+    .field input {
+        width: 100%; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--line);
+        background: #0b1120; color: var(--text); font-size: 16px;
+    }
+    .btn {
+        width: 100%; padding: 14px; border: none; border-radius: 12px; font-size: 16px; font-weight: 700;
+        color: #001; background: var(--accent); cursor: pointer;
+    }
+    .btn:active { transform: scale(.99); }
+    .btn.ghost { background: transparent; color: var(--text); border: 1px solid var(--line); }
+    .btn.danger { background: transparent; color: var(--out); border: 1px solid var(--out); }
+
+    .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 16px; margin-bottom: 16px; }
+    .card h2 { margin: 0 0 12px; font-size: 15px; }
+
+    .emp-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+    .emp-row:last-child { border-bottom: none; }
+    .emp-avatar { width: 44px; height: 44px; border-radius: 50%; background: var(--bg2); display: grid; place-items: center; font-weight: 700; color: var(--accent); }
+    .emp-info { flex: 1; min-width: 0; }
+    .emp-name { font-weight: 600; }
+    .emp-meta { font-size: 12px; color: var(--muted); }
+    .emp-del { background: transparent; border: none; font-size: 18px; cursor: pointer; padding: 8px; }
+    .empty { text-align: center; color: var(--muted); padding: 24px 0; }
+
+    /* ---------- 记录 ---------- */
+    .summary { background: var(--bg2); border-radius: 12px; padding: 12px 14px; font-size: 13px; color: var(--text); margin-bottom: 12px; }
+    .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+    th { color: var(--muted); font-weight: 600; font-size: 12px; }
+    .cell-in { color: var(--in); font-weight: 600; }
+    .cell-out { color: var(--out); font-weight: 600; }
+    .row-actions { display: flex; gap: 10px; margin-top: 12px; }
+    .row-actions .btn { flex: 1; }
+
+    /* ---------- 底部导航 ---------- */
+    nav {
+        position: sticky; bottom: 0; z-index: 20;
+        display: flex; border-top: 1px solid var(--line);
+        background: rgba(15, 23, 42, 0.92); backdrop-filter: blur(8px);
+        padding-bottom: var(--safe-bot);
+    }
+    nav button {
+        flex: 1; background: transparent; border: none; color: var(--muted);
+        padding: 10px 0 8px; font-size: 11px; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 3px;
+    }
+    nav button .ico { font-size: 22px; }
+    nav button.active { color: var(--accent); }
+
+    /* ---------- 注册弹层 ---------- */
+    .modal { position: fixed; inset: 0; z-index: 50; display: none; align-items: center; justify-content: center; padding: 16px; background: rgba(0,0,0,.7); }
+    .modal.show { display: flex; }
+    .modal-card { width: 100%; max-width: 460px; background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 18px; }
+    .modal-card h3 { margin: 0 0 12px; }
+    .bar { height: 8px; background: #0b1120; border-radius: 999px; overflow: hidden; margin: 12px 0 6px; }
+    .bar > div { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+    .enroll-text { text-align: center; color: var(--muted); font-size: 13px; }
+    .thumbs { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0; }
+    .thumbs img { width: 44px; height: 44px; border-radius: 8px; object-fit: cover; }
+
+    /* ---------- 全局提示 / 更新条 ---------- */
+    .toast {
+        position: fixed; left: 50%; bottom: calc(80px + var(--safe-bot)); transform: translateX(-50%) translateY(20px);
+        background: #0b1120; border: 1px solid var(--line); color: var(--text);
+        padding: 12px 18px; border-radius: 12px; font-size: 14px; opacity: 0; pointer-events: none;
+        transition: .25s; z-index: 60; max-width: 90vw; text-align: center;
+    }
+    .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+    .toast.ok { border-color: var(--in); }
+    .toast.err { border-color: var(--out); }
+
+    .update-banner {
+        position: fixed; top: calc(8px + var(--safe-top)); left: 50%; transform: translateX(-50%);
+        display: none; align-items: center; gap: 10px; z-index: 70;
+        background: var(--accent); color: #001; padding: 8px 14px; border-radius: 999px; font-size: 13px; font-weight: 600;
+        box-shadow: 0 6px 20px rgba(0,0,0,.4);
+    }
+    .update-banner.show { display: flex; }
+    .update-banner button { background: #001; color: #fff; border: none; padding: 6px 12px; border-radius: 999px; font-size: 12px; cursor: pointer; }
+
+    /* ---------- 启动遮罩 ---------- */
+    .boot { position: fixed; inset: 0; z-index: 100; background: var(--bg); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; transition: opacity .4s; }
+    .boot.hidden { opacity: 0; pointer-events: none; }
+    .boot .ring { width: 48px; height: 48px; border: 4px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin 1s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .boot .b-title { font-size: 18px; font-weight: 700; }
+    .boot .b-status { color: var(--muted); font-size: 13px; max-width: 80vw; text-align: center; }
+
+    /* ---------- iPad / 桌面：两栏化打卡页 ---------- */
+    @media (min-width: 820px) {
+        nav { display: none; }
+        header .tabs { display: flex; gap: 6px; margin-left: 24px; }
+        header .tabs button { background: transparent; border: none; color: var(--muted); font-size: 14px; cursor: pointer; padding: 6px 12px; border-radius: 8px; }
+        header .tabs button.active { color: var(--accent); background: var(--bg2); }
+        main { padding: 24px; }
+        #panel-clock .clock-wrap { display: grid; grid-template-columns: 1.4fr 1fr; gap: 20px; align-items: start; }
+        #panel-clock .clock-card { margin-top: 0; }
+    }
+    @media (max-width: 819px) { header .tabs { display: none; } }
+</style>
+</head>
+<body>
+
+<div class="boot" id="bootOverlay">
+    <div class="ring"></div>
+    <div class="b-title">Face TMS</div>
+    <div class="b-status" id="bootStatus">加载中…</div>
+</div>
+
+<div class="update-banner" id="updateBanner">
+    有新版本 <button id="reloadBtn">立即更新</button>
+</div>
+
+<header>
+    <span class="logo">🕐</span>
+    <h1>Face TMS</h1>
+    <div class="tabs">
+        <button data-tab="clock" class="active">打卡</button>
+        <button data-tab="employees">员工</button>
+        <button data-tab="records">记录</button>
+    </div>
+    <span class="pill"><span id="clockEmpCount">0</span> 名员工</span>
+</header>
+
+<main>
+    <!-- ===== 打卡 ===== -->
+    <section class="panel show" id="panel-clock">
+        <div class="clock-wrap">
+            <div class="stage">
+                <video id="clockVideo" playsinline muted autoplay></video>
+                <canvas id="clockOverlay"></canvas>
+            </div>
+            <div>
+                <div class="clock-hint" id="clockHint">请正对镜头…</div>
+                <div class="clock-card" id="clockCard"></div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ===== 员工 ===== -->
+    <section class="panel" id="panel-employees">
+        <div class="card">
+            <h2>➕ 注册新员工</h2>
+            <div class="field">
+                <label>姓名</label>
+                <input id="empName" type="text" placeholder="如：张三" autocomplete="off" />
+            </div>
+            <div class="field">
+                <label>部门（选填）</label>
+                <input id="empDept" type="text" placeholder="如：研发部" autocomplete="off" />
+            </div>
+            <button class="btn" id="enrollBtn">📸 采集人脸并注册</button>
+        </div>
+        <div class="card">
+            <h2>👥 已注册员工</h2>
+            <div id="empList"></div>
+            <div class="empty" id="empEmpty">还没有员工，先注册一个吧。</div>
+        </div>
+    </section>
+
+    <!-- ===== 记录 ===== -->
+    <section class="panel" id="panel-records">
+        <div class="card">
+            <h2>📊 考勤记录</h2>
+            <div class="summary" id="recordsSummary">今日暂无完整工时记录</div>
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr><th>员工</th><th>类型</th><th>日期</th><th>时间</th></tr>
+                    </thead>
+                    <tbody id="recordsBody"></tbody>
+                </table>
+            </div>
+            <div class="empty" id="recordsEmpty">暂无打卡记录。</div>
+            <div class="row-actions">
+                <button class="btn ghost" id="exportCsvBtn">⬇ 导出 CSV</button>
+                <button class="btn danger" id="clearRecordsBtn">清空记录</button>
+            </div>
+        </div>
+        <div class="card">
+            <h2>⚙️ 识别灵敏度</h2>
+            <div class="field">
+                <label>匹配阈值 <span id="thresholdVal">0.50</span>（越小越严格）</label>
+                <input id="thresholdInput" type="range" min="0.35" max="0.7" step="0.01" />
+            </div>
+        </div>
+    </section>
+</main>
+
+<nav>
+    <button data-tab="clock" class="active"><span class="ico">🕐</span>打卡</button>
+    <button data-tab="employees"><span class="ico">👥</span>员工</button>
+    <button data-tab="records"><span class="ico">📊</span>记录</button>
+</nav>
+
+<!-- 注册弹层 -->
+<div class="modal" id="enrollModal">
+    <div class="modal-card">
+        <h3 id="enrollTitle">注册</h3>
+        <div class="stage" style="aspect-ratio:4/3;">
+            <video id="enrollVideo" playsinline muted autoplay></video>
+            <canvas id="enrollOverlay"></canvas>
+        </div>
+        <div class="bar"><div id="enrollBar"></div></div>
+        <div class="enroll-text" id="enrollText">0 / 0</div>
+        <div class="thumbs" id="enrollThumbs"></div>
+        <button class="btn ghost" id="enrollCancel">取消</button>
+    </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<!-- 核心库（复用项目已有文件） -->
+<script src="../../js/lib/tf.min.js"></script>
+<script src="../../js/lib/tf-backend-wasm.js"></script>
+<script src="../../js/lib/face-api.js"></script>
+<script src="../../js/core/FaceRegistrationManager.js"></script>
+<script src="../../js/core/FaceMatcher.js"></script>
+
+<!-- TMS 自己的存储与逻辑 -->
+<script src="./js/tms-db.js"></script>
+<script src="./js/tms-app.js"></script>
+</body>
+</html>

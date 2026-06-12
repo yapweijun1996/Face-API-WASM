@@ -1,0 +1,19 @@
+{
+  "name": "Face TMS — 人脸考勤系统",
+  "short_name": "Face TMS",
+  "description": "用 Face-API-WASM 做的纯前端人脸打卡考勤示例（离线可用）",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a",
+  "icons": [
+    {
+      "src": "./icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
