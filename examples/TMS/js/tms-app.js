@@ -57,10 +57,11 @@
     const detectorOptions = () => new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.5 });
 
     // MiniFASNet-V2 ONNX anti-spoofing: input 1x3x80x80 BGR float32 [0,1].
-    // Upstream Silent-Face-Anti-Spoofing treats argmax class 1 as Real Face.
+    // ONNX export returns [live, print-attack, replay-attack].
     const LIVENESS_MODEL_URL = './models/minifasnet_v2.onnx';
-    const LIVENESS_REAL_CLASS_INDEX = 1;
+    const LIVENESS_REAL_CLASS_INDEX = 0;
     const LIVENESS_LIVE_THRESHOLD = 0.50;
+    const LIVENESS_CROP_SCALE = 1.55;
     const antiSpoof = {
         session: null,
         loading: null,
@@ -190,20 +191,56 @@
         return exps.map(v => v / sum);
     }
 
+    function showLivenessCropDebug(sourceCanvas, meta) {
+        let panel = document.getElementById('livenessCropDebug');
+        if (!panel) {
+            panel = document.createElement('div');
+            panel.id = 'livenessCropDebug';
+            panel.style.cssText = [
+                'position:fixed',
+                'right:16px',
+                'bottom:16px',
+                'z-index:9999',
+                'padding:10px',
+                'border:1px solid rgba(250,204,21,.8)',
+                'border-radius:12px',
+                'background:rgba(15,23,42,.92)',
+                'color:#e5e7eb',
+                'font:12px/1.35 ui-monospace,SFMono-Regular,Menlo,monospace',
+                'box-shadow:0 16px 40px rgba(0,0,0,.35)',
+                'pointer-events:none'
+            ].join(';');
+            panel.innerHTML = `
+                <div style="margin-bottom:6px;color:#facc15;font-weight:700">ONNX liveness crop</div>
+                <canvas width="160" height="160" style="display:block;width:160px;height:160px;image-rendering:pixelated;border-radius:8px;background:#020617"></canvas>
+                <div data-meta style="margin-top:6px;max-width:180px;color:#cbd5e1"></div>
+            `;
+            document.body.appendChild(panel);
+        }
+        const debugCanvas = panel.querySelector('canvas');
+        const debugCtx = debugCanvas.getContext('2d');
+        debugCtx.imageSmoothingEnabled = false;
+        debugCtx.clearRect(0, 0, debugCanvas.width, debugCanvas.height);
+        debugCtx.drawImage(sourceCanvas, 0, 0, debugCanvas.width, debugCanvas.height);
+        panel.querySelector('[data-meta]').textContent =
+            `src ${Math.round(meta.sx)},${Math.round(meta.sy)} ${Math.round(meta.sw)}x${Math.round(meta.sh)}`;
+    }
+
     function makeLivenessTensor(video, box) {
-        const size = Math.max(box.width, box.height) * 2.7;
+        const faceSide = Math.max(box.width, box.height);
+        const maxSquare = Math.min(video.videoWidth, video.videoHeight) * 0.96;
+        const size = Math.max(faceSide * 1.15, Math.min(faceSide * LIVENESS_CROP_SCALE, maxSquare));
         const cx = box.x + box.width / 2;
         const cy = box.y + box.height / 2;
-        const sx = Math.max(0, cx - size / 2);
-        const sy = Math.max(0, cy - size / 2);
-        const ex = Math.min(video.videoWidth, cx + size / 2);
-        const ey = Math.min(video.videoHeight, cy + size / 2);
+        const sx = Math.max(0, Math.min(video.videoWidth - size, cx - size / 2));
+        const sy = Math.max(0, Math.min(video.videoHeight - size, cy - size / 2));
 
         const canvas = document.createElement('canvas');
         canvas.width = 80;
         canvas.height = 80;
         const ctx = canvas.getContext('2d');
-        ctx.drawImage(video, sx, sy, Math.max(1, ex - sx), Math.max(1, ey - sy), 0, 0, 80, 80);
+        ctx.drawImage(video, sx, sy, size, size, 0, 0, 80, 80);
+        showLivenessCropDebug(canvas, { sx, sy, sw: size, sh: size });
 
         const rgba = ctx.getImageData(0, 0, 80, 80).data;
         const input = new Float32Array(3 * 80 * 80);
@@ -235,7 +272,7 @@
         });
         return {
             live: realScore,
-            print: prob[0],
+            print: prob[1],
             replay: prob[2],
             label,
             passed
@@ -541,7 +578,7 @@
                 if (!inCooldown && !clockedThisFrame.has(emp.id)) {
                     clockedThisFrame.add(emp.id);
                     if (await doClock(emp, d.action, box)) {
-                        justClocked = { emp, confidence: result.confidence };
+                        justClocked = matchedFaces[matchedFaces.length - 1];
                     } else {
                         // 写库失败 → 回退该 track，使其下一轮重新倒计时打卡（保留已通过的活体）
                         d.phase = 'hold'; d.startTs = now;
@@ -556,7 +593,7 @@
 
         // 侧边卡片：优先刚打卡成功者；否则保持上一个 primary（仍在画面时）或最大的脸
         //（迟滞：仅当别的脸明显更大 >1.3x 才切换，避免两张相近大小的脸来回抖动）
-        let target = justClocked ? matchedFaces.find(f => f.emp.id === justClocked.emp.id) : null;
+        let target = justClocked || null;
         if (!target && matchedFaces.length) {
             const sticky = matchedFaces.find(f => f.emp.id === lastPrimaryId);
             const biggest = matchedFaces.reduce((a, b) => (b.box.width * b.box.height > a.box.width * a.box.height ? b : a));
