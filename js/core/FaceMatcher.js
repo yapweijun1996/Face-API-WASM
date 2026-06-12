@@ -283,6 +283,12 @@ class FaceMatcher {
      * 欧几里得距离
      */
     _euclideanDistance(a, b) {
+        // 维度不一致时，b[i] 会是 undefined，diff=NaN，最终 sqrt(NaN)=NaN，
+        // 而 NaN < threshold 永远为 false，会让本应匹配的用户被静默判为 NO_MATCH。
+        // 直接返回 Infinity，让该比对自然落选而不是污染结果。
+        if (!a || !b || a.length !== b.length) {
+            return Infinity;
+        }
         let sum = 0;
         for (let i = 0; i < a.length; i++) {
             const diff = a[i] - b[i];

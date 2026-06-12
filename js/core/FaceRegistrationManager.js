@@ -114,13 +114,15 @@ class FaceRegistrationManager {
     /**
      * 取消注册
      */
-    cancel() {
+    async cancel() {
         this.descriptors = [];
         this.capturedFrames = [];
         this.meanDescriptor = null;
 
+        // 必须 await：否则 clearProgress 可能在新一轮注册写入进度后才完成，
+        // 把刚保存的新进度删掉（restart 竞态）。
         if (this._storage) {
-            this._storage.clearProgress();
+            await this._storage.clearProgress();
         }
 
         this._setState(RegistrationState.IDLE);
@@ -129,9 +131,11 @@ class FaceRegistrationManager {
     /**
      * 重新开始
      */
-    restart() {
-        this.cancel();
-        this.start(this.userId, this.userName);
+    async restart() {
+        const userId = this.userId;
+        const userName = this.userName;
+        await this.cancel();          // 等清理完成，避免删掉新进度
+        this.start(userId, userName);
     }
 
     // ========== 核心处理逻辑 ==========
@@ -294,6 +298,12 @@ class FaceRegistrationManager {
      * 手动触发完成（即使未采集满）
      */
     async finishEarly() {
+        // state 守卫：若已在 COMPUTING/SAVED（_finalize 已被 processDetection 触发），
+        // 再次调用会导致 saveUser 双写、onComplete 触发两次。
+        if (this.state !== RegistrationState.COLLECTING) {
+            console.warn('finishEarly ignored: not in collecting state');
+            return;
+        }
         if (this.descriptors.length < 3) {
             throw new Error('Need at least 3 captures to finish');
         }
@@ -337,10 +347,21 @@ class FaceRegistrationManager {
             return { passed: false, reason: 'low_confidence', score };
         }
 
-        // 检查人脸大小（可选）
-        const box = detection.alignedRect?._box || detection.detection._box;
-        if (box) {
-            // 这里可以添加人脸大小检查
+        // 人脸面积比检查：太小的脸（离镜头太远）特征质量差，拒绝采集。
+        // 只有在能拿到画面尺寸时才判定，拿不到就放行，避免误拒导致注册卡死。
+        const box = detection.alignedRect?._box || detection.detection._box || detection.detection.box;
+        const dims = detection.detection.imageDims || detection.detection._imageDims || detection.imageDims;
+        if (box && dims) {
+            const bw = box._width ?? box.width;
+            const bh = box._height ?? box.height;
+            const iw = dims._width ?? dims.width;
+            const ih = dims._height ?? dims.height;
+            if (bw && bh && iw && ih) {
+                const areaRatio = (bw * bh) / (iw * ih);
+                if (areaRatio < this.config.minFaceAreaRatio) {
+                    return { passed: false, reason: 'face_too_small', areaRatio };
+                }
+            }
         }
 
         return { passed: true };
@@ -380,6 +401,10 @@ class FaceRegistrationManager {
      * 欧几里得距离
      */
     _euclideanDistance(a, b) {
+        // 维度不一致直接返回 Infinity，避免 NaN 污染相似度/一致性判定。
+        if (!a || !b || a.length !== b.length) {
+            return Infinity;
+        }
         let sum = 0;
         for (let i = 0; i < a.length; i++) {
             const diff = a[i] - b[i];

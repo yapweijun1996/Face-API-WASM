@@ -205,17 +205,28 @@ class FaceStorage {
             }
 
             let imported = 0;
+            let skipped = 0;
             for (const user of data) {
+                // 逐条校验：缺 id 会让 IndexedDB 用 undefined 当 keyPath 污染存储；
+                // descriptors 非数组会让 .map 抛错中断整批导入。坏数据跳过而非中断。
+                if (!user || typeof user !== 'object') { skipped++; continue; }
+                if (user.id === undefined || user.id === null || user.id === '') { skipped++; continue; }
+                if (!Array.isArray(user.descriptors) || user.descriptors.length === 0) { skipped++; continue; }
+                const allValid = user.descriptors.every(d => Array.isArray(d) || ArrayBuffer.isView(d));
+                if (!allValid) { skipped++; continue; }
+
                 await this.saveUser({
-                    userId: user.id,
-                    name: user.name,
+                    userId: String(user.id),
+                    name: user.name != null ? String(user.name) : String(user.id),
                     descriptors: user.descriptors.map(d => new Float32Array(d)),
-                    meanDescriptor: user.meanDescriptor ? new Float32Array(user.meanDescriptor) : null
+                    meanDescriptor: (Array.isArray(user.meanDescriptor) || ArrayBuffer.isView(user.meanDescriptor))
+                        ? new Float32Array(user.meanDescriptor)
+                        : null
                 });
                 imported++;
             }
 
-            return { success: true, count: imported };
+            return { success: true, count: imported, skipped };
         } catch (error) {
             return { success: false, error: error.message };
         }
