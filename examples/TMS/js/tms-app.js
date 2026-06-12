@@ -22,6 +22,7 @@
     // ---------- 运行状态 ----------
     let settings = tmsDB.getSettings();
     let matcher = null;
+    let empPhotos = new Map();        // employeeId -> 脸部缩略图 dataURL，供打卡卡片显示
     let regManager = null;
     let appMode = 'idle';            // 'idle' | 'clock' | 'enroll'
     let stream = null;
@@ -136,6 +137,7 @@
             descriptors: e.descriptors,
             meanDescriptor: e.meanDescriptor
         })));
+        empPhotos = new Map(employees.map(e => [e.id, e.photo]));
         el.empCountPill.textContent = I18N.t('emp_count', { n: employees.length });
         return employees;
     }
@@ -238,10 +240,11 @@
         lastClockKey = key;
 
         const initial = (emp.name || '?').charAt(0).toUpperCase();
+        const photo = empPhotos.get(emp.id);
         if (action === 'done') {
             el.clockCard.innerHTML = '';
             el.clockCard.append(
-                buildAvatar(initial, 'ok'),
+                buildAvatar(initial, 'ok', photo),
                 buildText(emp.name, I18N.t('clock_recorded', { c: confidence.toFixed(0) })),
             );
             const badge = document.createElement('div');
@@ -255,7 +258,7 @@
 
         el.clockCard.innerHTML = '';
         el.clockCard.append(
-            buildAvatar(initial, action === 'in' ? 'in' : 'out'),
+            buildAvatar(initial, action === 'in' ? 'in' : 'out', photo),
             buildText(emp.name, I18N.t('clock_confidence', { c: confidence.toFixed(0) }))
         );
         const btn = document.createElement('button');
@@ -267,10 +270,16 @@
         el.clockHint.textContent = '';
     }
 
-    function buildAvatar(initial, cls) {
+    function buildAvatar(initial, cls, photo) {
         const a = document.createElement('div');
         a.className = 'clock-avatar ' + cls;
-        a.textContent = initial;
+        if (photo) {
+            const img = document.createElement('img');
+            img.src = photo;          // dataURL，.src 赋值不会执行脚本
+            a.appendChild(img);
+        } else {
+            a.textContent = initial;
+        }
         return a;
     }
     function buildText(name, sub) {
@@ -337,12 +346,16 @@
         };
         regManager.onComplete = async (res) => {
             const data = regManager.getRegistrationData(); // { id, name, descriptors, meanDescriptor }
+            // 取采集过程中间的一帧脸部缩略图作为员工照片
+            const frames = regManager.capturedFrames || [];
+            const photo = frames.length ? frames[Math.floor(frames.length / 2)] : null;
             await tmsDB.saveEmployee({
                 id: data.id,
                 name: data.name,
                 department: el.empDept.value.trim(),
                 descriptors: data.descriptors,
                 meanDescriptor: data.meanDescriptor,
+                photo,
                 enrolledAt: Date.now()
             });
             await reloadMatcher();
@@ -391,7 +404,13 @@
 
             const av = document.createElement('div');
             av.className = 'emp-avatar';
-            av.textContent = (emp.name || '?').charAt(0).toUpperCase();
+            if (emp.photo) {
+                const img = document.createElement('img');
+                img.src = emp.photo;
+                av.appendChild(img);
+            } else {
+                av.textContent = (emp.name || '?').charAt(0).toUpperCase();
+            }
 
             const info = document.createElement('div');
             info.className = 'emp-info';

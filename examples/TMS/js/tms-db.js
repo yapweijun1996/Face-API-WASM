@@ -71,6 +71,7 @@ class TmsDB {
             department: emp.department || '',
             descriptors: emp.descriptors || [],
             meanDescriptor: emp.meanDescriptor || null,
+            photo: emp.photo || null,           // 注册时抓取的脸部缩略图（dataURL）
             enrolledAt: emp.enrolledAt || Date.now()
         };
         await this._req(this._tx(STORE_EMPLOYEES, 'readwrite').put(data));

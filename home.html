@@ -130,6 +130,18 @@
             color: var(--text-secondary);
         }
 
+        .tag-example {
+            background: rgba(0, 245, 160, 0.18);
+            color: #00f5a0;
+        }
+
+        /* Featured example card spans full width on top */
+        .card.featured {
+            grid-column: 1 / -1;
+            border-color: rgba(0, 208, 132, 0.4);
+            background: linear-gradient(135deg, #11261d, var(--bg-card));
+        }
+
         .footer {
             margin-top: 60px;
             color: var(--text-secondary);
@@ -159,6 +171,17 @@
     <p class="subtitle">WASM-powered face detection with modern UI</p>
 
     <div class="card-grid">
+        <!-- Featured Example: TMS -->
+        <a href="examples/TMS/index.html" class="card featured">
+            <div class="card-icon">🕐</div>
+            <h3 class="card-title">Face TMS — Time Management System</h3>
+            <p class="card-description">
+                A full offline PWA example: enroll staff faces, clock in/out by face recognition, view
+                attendance records &amp; daily hours, export CSV. English / 中文. Installable on phone, iPad &amp; desktop.
+            </p>
+            <span class="card-tag tag-example">Example · PWA</span>
+        </a>
+
         <!-- Demo Card -->
         <a href="index.html" class="card">
             <div class="card-icon">🚀</div>
