@@ -34,6 +34,12 @@
     const cooldown = new Map();
     let lastClockKey = null;          // 当前 clock 面板展示的员工，避免重复渲染
 
+    // 实时打卡（自动）+ 活体检测状态
+    const HOLD_MS = 1500;             // 对准保持多久自动打卡
+    const BLINK_EAR = 0.21;           // 眼睛纵横比低于此值视为闭眼（眨眼）
+    let lastClockDet = null;          // 最近一帧 clock 检测结果（用于逐帧画环）
+    let holdState = null;             // { id, name, action, startTs, blinked, conf }
+
     const detectorOptions = () => new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.5 });
 
     // ---------- DOM ----------
@@ -174,10 +180,16 @@
         let busy = false;
         let lastRun = 0;
 
+        // clock 模式检测更快（120ms）以捕捉眨眼；enroll 模式 200ms 省电
+        const interval = appMode === 'clock' ? 120 : 200;
+
         const loop = async (ts) => {
             if (!detecting || !activeVideo) return;
-            // 节流：约每 200ms 跑一次，省手机电量
-            if (!busy && ts - lastRun > 200 && activeVideo.readyState === activeVideo.HAVE_ENOUGH_DATA) {
+
+            // 逐帧重绘 clock 叠加层，让倒计时环平滑动画（即使检测被节流）
+            if (ctx && appMode === 'clock') drawClockOverlay(ctx, overlay);
+
+            if (!busy && ts - lastRun > interval && activeVideo.readyState === activeVideo.HAVE_ENOUGH_DATA) {
                 busy = true; lastRun = ts;
                 try {
                     const det = await faceapi
@@ -185,13 +197,13 @@
                         .withFaceLandmarks()
                         .withFaceDescriptor();
 
-                    if (ctx) drawBox(ctx, overlay, det);
-
-                    if (det) {
-                        if (appMode === 'clock') handleClockFrame(det);
-                        else if (appMode === 'enroll') handleEnrollFrame(det);
-                    } else if (appMode === 'clock') {
-                        showClockIdle();
+                    if (appMode === 'clock') {
+                        lastClockDet = det || null;
+                        if (det) handleClockFrame(det);
+                        else { holdState = null; showClockIdle(); }
+                    } else if (appMode === 'enroll') {
+                        if (ctx) drawBox(ctx, overlay, det);
+                        if (det) handleEnrollFrame(det);
                     }
                 } catch (e) {
                     // 单帧失败忽略，继续下一帧
@@ -204,13 +216,86 @@
         loopHandle = requestAnimationFrame(loop);
     }
 
+    // enroll 叠加层：画人脸框（canvas 未镜像，需翻转 x 对齐镜像视频）
     function drawBox(ctx, overlay, det) {
         ctx.clearRect(0, 0, overlay.width, overlay.height);
         if (!det) return;
         const b = det.detection.box;
+        const x = overlay.width - b.x - b.width;
         ctx.strokeStyle = '#22d3ee';
         ctx.lineWidth = 3;
-        ctx.strokeRect(b.x, b.y, b.width, b.height);
+        ctx.strokeRect(x, b.y, b.width, b.height);
+    }
+
+    // ---------- 眼睛纵横比（眨眼检测） ----------
+    function dist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
+    function earOf(eye) {
+        // eye: 6 点；EAR =(|p1-p5|+|p2-p4|)/(2|p0-p3|)
+        return (dist(eye[1], eye[5]) + dist(eye[2], eye[4])) / (2 * dist(eye[0], eye[3]) || 1);
+    }
+    function blinkNow(det) {
+        try {
+            const l = det.landmarks.getLeftEye();
+            const r = det.landmarks.getRightEye();
+            return (earOf(l) + earOf(r)) / 2 < BLINK_EAR;
+        } catch (e) { return false; }
+    }
+
+    // ---------- clock 实时叠加层：人脸框 + 姓名 + 倒计时环 + 提示 ----------
+    function drawClockOverlay(ctx, overlay) {
+        ctx.clearRect(0, 0, overlay.width, overlay.height);
+        const det = lastClockDet;
+        if (!det) return;
+
+        const b = det.detection.box;
+        const x = overlay.width - b.x - b.width;     // 翻转 x 对齐镜像视频
+        const y = b.y;
+
+        const inCooldown = holdState && holdState.phase === 'done';
+        const color = inCooldown ? '#22c55e' : (holdState ? (holdState.action === 'in' ? '#22c55e' : '#f43f5e') : '#22d3ee');
+
+        // 人脸框
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 3;
+        ctx.strokeRect(x, y, b.width, b.height);
+
+        if (!holdState) return;
+
+        // 姓名标签（canvas 未镜像，文字可正常阅读）
+        const label = holdState.name;
+        ctx.font = '600 18px -apple-system, "PingFang SC", sans-serif';
+        const tw = ctx.measureText(label).width;
+        ctx.fillStyle = 'rgba(15,23,42,.85)';
+        ctx.fillRect(x, y - 30, tw + 16, 26);
+        ctx.fillStyle = '#fff';
+        ctx.fillText(label, x + 8, y - 11);
+
+        // 倒计时环（人脸右上角）
+        const cx = x + b.width + 4, cy = y + 18, rad = 16;
+        let prog = 0, hint = '';
+        if (holdState.phase === 'done') { prog = 1; }
+        else if (!holdState.blinked) { prog = 0.15; hint = I18N.t('liveness_blink'); }
+        else {
+            prog = Math.min(1, (performance.now() - holdState.startTs) / HOLD_MS);
+            hint = I18N.t(holdState.action === 'in' ? 'clock_in_btn' : 'clock_out_btn');
+        }
+        ctx.beginPath(); ctx.arc(cx, cy, rad, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(255,255,255,.25)'; ctx.lineWidth = 4; ctx.stroke();
+        ctx.beginPath(); ctx.arc(cx, cy, rad, -Math.PI / 2, -Math.PI / 2 + prog * Math.PI * 2);
+        ctx.strokeStyle = color; ctx.lineWidth = 4; ctx.lineCap = 'round'; ctx.stroke();
+        if (holdState.phase === 'done') {
+            ctx.fillStyle = color; ctx.font = '700 16px sans-serif'; ctx.fillText('✓', cx - 5, cy + 6);
+        }
+
+        // 底部提示
+        if (hint) {
+            ctx.font = '600 15px -apple-system, sans-serif';
+            const hw = ctx.measureText(hint).width;
+            ctx.fillStyle = 'rgba(15,23,42,.85)';
+            ctx.fillRect(x, y + b.height + 6, hw + 16, 24);
+            ctx.fillStyle = color;
+            ctx.fillText(hint, x + 8, y + b.height + 23);
+        }
     }
 
     // ============================================================
@@ -219,53 +304,65 @@
     async function handleClockFrame(det) {
         const result = matcher.findBestMatch(det.descriptor);
         if (result.status !== 'matched') {
+            holdState = null;
             showClockNoMatch();
             return;
         }
         const emp = result.user;
-        // 冷却中：刚打过卡，提示已记录
+
+        // 冷却中：刚打过卡
         const last = cooldown.get(emp.id);
         if (last && Date.now() - last < settings.clockCooldownMs) {
-            renderClockCard(emp, result.confidence, 'done');
+            holdState = { id: emp.id, name: emp.name, action: 'in', phase: 'done', blinked: true, startTs: 0 };
+            renderClockStatus(emp, result.confidence, 'done');
             return;
         }
-        const lastRec = await tmsDB.getLastAttendance(emp.id);
-        const nextType = lastRec && lastRec.type === 'in' ? 'out' : 'in';
-        renderClockCard(emp, result.confidence, nextType);
+
+        // 维护 hold：换人则重置计时
+        if (!holdState || holdState.id !== emp.id || holdState.phase === 'done') {
+            const lastRec = await tmsDB.getLastAttendance(emp.id);
+            const nextType = lastRec && lastRec.type === 'in' ? 'out' : 'in';
+            holdState = { id: emp.id, name: emp.name, action: nextType, startTs: performance.now(), blinked: false, phase: 'hold' };
+        }
+
+        // 活体：检测到一次闭眼即视为通过；通过后重置计时，开始正式倒计时
+        if (!holdState.blinked && blinkNow(det)) {
+            holdState.blinked = true;
+            holdState.startTs = performance.now();
+        }
+
+        renderClockStatus(emp, result.confidence, holdState.blinked ? 'holding' : 'blink');
+
+        // 满足：已眨眼 + 保持足够时长 → 自动打卡
+        if (holdState.blinked && performance.now() - holdState.startTs >= HOLD_MS) {
+            const action = holdState.action;
+            holdState.phase = 'done';
+            await doClock(emp, action);
+        }
     }
 
-    function renderClockCard(emp, confidence, action) {
-        const key = emp.id + ':' + action;
-        if (key === lastClockKey) return;   // 避免每帧重渲染
+    function renderClockStatus(emp, confidence, phase) {
+        const key = emp.id + ':' + phase;
+        if (key === lastClockKey) return;
         lastClockKey = key;
 
         const initial = (emp.name || '?').charAt(0).toUpperCase();
         const photo = empPhotos.get(emp.id);
-        if (action === 'done') {
-            el.clockCard.innerHTML = '';
-            el.clockCard.append(
-                buildAvatar(initial, 'ok', photo),
-                buildText(emp.name, I18N.t('clock_recorded', { c: confidence.toFixed(0) })),
-            );
+        const cls = phase === 'done' ? 'ok' : (holdState && holdState.action === 'in' ? 'in' : 'out');
+
+        let sub;
+        if (phase === 'done') sub = I18N.t('clock_recorded', { c: confidence.toFixed(0) });
+        else if (phase === 'blink') sub = I18N.t('liveness_blink');
+        else sub = I18N.t(holdState && holdState.action === 'in' ? 'hold_to_in' : 'hold_to_out');
+
+        el.clockCard.innerHTML = '';
+        el.clockCard.append(buildAvatar(initial, cls, photo), buildText(emp.name, sub));
+        if (phase === 'done') {
             const badge = document.createElement('div');
             badge.className = 'clock-badge ok';
             badge.textContent = I18N.t('clock_done');
             el.clockCard.appendChild(badge);
-            el.clockCard.className = 'clock-card show';
-            el.clockHint.textContent = '';
-            return;
         }
-
-        el.clockCard.innerHTML = '';
-        el.clockCard.append(
-            buildAvatar(initial, action === 'in' ? 'in' : 'out', photo),
-            buildText(emp.name, I18N.t('clock_confidence', { c: confidence.toFixed(0) }))
-        );
-        const btn = document.createElement('button');
-        btn.className = 'clock-action ' + action;
-        btn.textContent = action === 'in' ? I18N.t('clock_in_btn') : I18N.t('clock_out_btn');
-        btn.onclick = () => doClock(emp, action);
-        el.clockCard.appendChild(btn);
         el.clockCard.className = 'clock-card show';
         el.clockHint.textContent = '';
     }
@@ -292,12 +389,38 @@
     }
 
     async function doClock(emp, type) {
-        await tmsDB.addAttendance({ employeeId: emp.id, employeeName: emp.name, type });
-        cooldown.set(emp.id, Date.now());
+        cooldown.set(emp.id, Date.now());   // 先置冷却，挡住下一帧重入
         lastClockKey = null;
+        await tmsDB.addAttendance({ employeeId: emp.id, employeeName: emp.name, type });
+        beep(type === 'in' ? 880 : 520);
+        speak(I18N.t(type === 'in' ? 'voice_in' : 'voice_out', { name: emp.name }));
         toast(I18N.t(type === 'in' ? 'toast_clock_in' : 'toast_clock_out', { name: emp.name }), 'ok');
-        renderClockCard(emp, 100, 'done');
+        renderClockStatus(emp, 100, 'done');
         await renderRecords();
+    }
+
+    // ---------- 声音 / 语音 ----------
+    let audioCtx = null;
+    function beep(freq) {
+        try {
+            audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+            const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+            o.frequency.value = freq; o.type = 'sine';
+            o.connect(g); g.connect(audioCtx.destination);
+            g.gain.setValueAtTime(0.18, audioCtx.currentTime);
+            g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.25);
+            o.start(); o.stop(audioCtx.currentTime + 0.25);
+        } catch (e) {}
+    }
+    function speak(text) {
+        try {
+            if (!('speechSynthesis' in window)) return;
+            const u = new SpeechSynthesisUtterance(text);
+            u.lang = I18N.lang === 'zh' ? 'zh-CN' : 'en-US';
+            u.rate = 1.0;
+            speechSynthesis.cancel();
+            speechSynthesis.speak(u);
+        } catch (e) {}
     }
 
     function showClockIdle() {

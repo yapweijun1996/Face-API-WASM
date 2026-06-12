@@ -62,8 +62,9 @@
     }
     .stage video, .stage canvas {
         position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover;
-        transform: scaleX(-1);   /* 镜像，更自然 */
     }
+    .stage video { transform: scaleX(-1); }   /* 仅镜像视频，更自然 */
+    /* canvas 不镜像：绘制时手动翻转 x，文字才能正常阅读 */
     .stage canvas { pointer-events: none; }
 
     /* ---------- 打卡卡片 ---------- */
