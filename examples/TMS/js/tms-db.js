@@ -25,7 +25,7 @@ const DEFAULT_SETTINGS = {
     workStart: '09:00',         // 上班时间
     workEnd: '18:00',           // 下班时间
     graceMin: 10,               // 迟到宽限（分钟）
-    liveness: false             // 活体检测（眨眼防伪）：默认关闭，用户可在设置页手动开启
+    liveness: false             // ONNX 真人检测（防照片/屏幕）：默认关闭，用户可在设置页手动开启
 };
 
 class TmsDB {
@@ -133,8 +133,9 @@ class TmsDB {
     async getLastAttendance(employeeId) {
         await this.init();
         return new Promise((resolve, reject) => {
-            const idx = this._tx(STORE_ATTENDANCE, 'readonly').index('employeeId');
-            const req = idx.openCursor(IDBKeyRange.only(String(employeeId)), 'prev');
+            const tx = this.db.transaction(STORE_ATTENDANCE, 'readonly');
+            const req = tx.objectStore(STORE_ATTENDANCE).index('employeeId')
+                .openCursor(IDBKeyRange.only(String(employeeId)), 'prev');
             req.onsuccess = () => {
                 const cur = req.result;
                 // 同一 employeeId 下索引按主键(recordId 自增)升序，prev 取到的是
@@ -142,6 +143,10 @@ class TmsDB {
                 resolve(cur ? cur.value : null);
             };
             req.onerror = () => reject(req.error);
+            // 与 _req 保持一致：事务被 abort 时（如 QuotaExceededError）req.onerror
+            // 不一定触发，监听 tx.onabort 确保 Promise 不永久 pending。
+            tx.onabort = () => reject(tx.error || new Error('IDB transaction aborted'));
+            tx.onerror = () => reject(tx.error || new Error('IDB transaction error'));
         });
     }
 

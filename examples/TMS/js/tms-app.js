@@ -34,9 +34,8 @@
     const cooldown = new Map();
     let lastClockKey = null;          // 当前 clock 面板展示的员工，避免重复渲染
 
-    // 实时打卡（自动）+ 活体检测状态
+    // 实时打卡（自动）+ 真人检测状态
     const HOLD_MS = 1500;             // 对准保持多久自动打卡
-    const BLINK_EAR = 0.21;           // 眼睛纵横比低于此值视为闭眼（眨眼）
     let lastClockDets = [];          // 最近一帧所有检测到的脸：[{ box, match, hold }]（多人）
     // 按「物理人脸位置」追踪，每个 track 的 .data 挂独立 hold/活体/倒计时；
     // 取代旧的「按员工 id」存状态——根治同一员工被两张脸（本人+照片/双胞胎）共享 hold。
@@ -49,12 +48,25 @@
         in: '#22c55e',
         out: '#f43f5e',
         accent: '#22d3ee',
+        warn: '#fbbf24',
         unmatched: 'rgba(148,163,184,.75)'
     };
     // canvas 未镜像、视频 CSS 镜像：把检测坐标的 x 翻转过来对齐镜像画面
     const mirrorX = (overlayW, x, w) => overlayW - x - w;
 
     const detectorOptions = () => new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.5 });
+
+    // MiniFASNet-V2 ONNX anti-spoofing: input 1x3x80x80 BGR float32 [0,1].
+    // Upstream Silent-Face-Anti-Spoofing treats argmax class 1 as Real Face.
+    const LIVENESS_MODEL_URL = './models/minifasnet_v2.onnx';
+    const LIVENESS_REAL_CLASS_INDEX = 1;
+    const LIVENESS_LIVE_THRESHOLD = 0.50;
+    const antiSpoof = {
+        session: null,
+        loading: null,
+        inputName: null,
+        outputName: null
+    };
 
     // ---------- DOM ----------
     const $ = (id) => document.getElementById(id);
@@ -151,6 +163,75 @@
         await faceapi.detectSingleFace(c, detectorOptions());
     }
 
+    async function initAntiSpoof() {
+        if (antiSpoof.session) return antiSpoof.session;
+        if (antiSpoof.loading) return antiSpoof.loading;
+        antiSpoof.loading = (async () => {
+            if (!window.ort) throw new Error('ONNX Runtime Web not loaded');
+            ort.env.wasm.wasmPaths = './';
+            ort.env.wasm.numThreads = 1;
+            const session = await ort.InferenceSession.create(LIVENESS_MODEL_URL, {
+                executionProviders: ['wasm']
+            });
+            antiSpoof.session = session;
+            antiSpoof.inputName = session.inputNames[0];
+            antiSpoof.outputName = session.outputNames[0];
+            return session;
+        })().finally(() => {
+            antiSpoof.loading = null;
+        });
+        return antiSpoof.loading;
+    }
+
+    function softmax(values) {
+        const max = Math.max(...values);
+        const exps = values.map(v => Math.exp(v - max));
+        const sum = exps.reduce((a, b) => a + b, 0) || 1;
+        return exps.map(v => v / sum);
+    }
+
+    function makeLivenessTensor(video, box) {
+        const size = Math.max(box.width, box.height) * 2.7;
+        const cx = box.x + box.width / 2;
+        const cy = box.y + box.height / 2;
+        const sx = Math.max(0, cx - size / 2);
+        const sy = Math.max(0, cy - size / 2);
+        const ex = Math.min(video.videoWidth, cx + size / 2);
+        const ey = Math.min(video.videoHeight, cy + size / 2);
+
+        const canvas = document.createElement('canvas');
+        canvas.width = 80;
+        canvas.height = 80;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(video, sx, sy, Math.max(1, ex - sx), Math.max(1, ey - sy), 0, 0, 80, 80);
+
+        const rgba = ctx.getImageData(0, 0, 80, 80).data;
+        const input = new Float32Array(3 * 80 * 80);
+        for (let i = 0; i < 80 * 80; i++) {
+            const p = i * 4;
+            input[i] = rgba[p + 2] / 255;
+            input[80 * 80 + i] = rgba[p + 1] / 255;
+            input[2 * 80 * 80 + i] = rgba[p] / 255;
+        }
+        return new ort.Tensor('float32', input, [1, 3, 80, 80]);
+    }
+
+    async function predictLiveness(video, box) {
+        const session = await initAntiSpoof();
+        const tensor = makeLivenessTensor(video, box);
+        const output = await session.run({ [antiSpoof.inputName]: tensor });
+        const raw = Array.from(output[antiSpoof.outputName].data).slice(0, 3);
+        const prob = softmax(raw);
+        const label = prob.indexOf(Math.max(...prob));
+        return {
+            live: prob[LIVENESS_REAL_CLASS_INDEX],
+            print: prob[0],
+            replay: prob[2],
+            label,
+            passed: label === LIVENESS_REAL_CLASS_INDEX && prob[LIVENESS_REAL_CLASS_INDEX] >= LIVENESS_LIVE_THRESHOLD
+        };
+    }
+
     async function reloadMatcher() {
         const employees = await tmsDB.getAllEmployees();
         matcher = new FaceMatcher({ matchThreshold: settings.matchThreshold, useMeanDescriptor: true });
@@ -209,7 +290,7 @@
         let busy = false;
         let lastRun = 0;
 
-        // clock 模式检测更快（120ms）以捕捉眨眼；enroll 模式 200ms 省电
+        // clock 模式检测更快（120ms）以提升真人检测和倒计时反馈；enroll 模式 200ms 省电
         const interval = appMode === 'clock' ? 120 : 200;
 
         const loop = async (ts) => {
@@ -259,20 +340,6 @@
         ctx.strokeRect(x, b.y, b.width, b.height);
     }
 
-    // ---------- 眼睛纵横比（眨眼检测） ----------
-    function dist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
-    function earOf(eye) {
-        // eye: 6 点；EAR =(|p1-p5|+|p2-p4|)/(2|p0-p3|)
-        return (dist(eye[1], eye[5]) + dist(eye[2], eye[4])) / (2 * dist(eye[0], eye[3]) || 1);
-    }
-    function blinkNow(det) {
-        try {
-            const l = det.landmarks.getLeftEye();
-            const r = det.landmarks.getRightEye();
-            return (earOf(l) + earOf(r)) / 2 < BLINK_EAR;
-        } catch (e) { return false; }
-    }
-
     // ---------- clock 实时叠加层：人脸框 + 姓名 + 倒计时环 + 提示 ----------
     // ---------- 打卡成功庆祝粒子 ----------
     function spawnCelebration(cx, cy, type) {
@@ -304,7 +371,7 @@
             ctx.globalAlpha = Math.max(0, p.life);
             ctx.fillStyle = p.color;
             ctx.beginPath();
-            ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
+            ctx.arc(p.x, p.y, Math.max(0, p.size * p.life), 0, Math.PI * 2);
             ctx.fill();
         }
         ctx.globalAlpha = 1;
@@ -326,6 +393,7 @@
 
         const done = hs && hs.phase === 'done';
         const color = !match ? COLORS.unmatched                // 未识别：灰
+            : (hs && hs.phase === 'spoof') ? COLORS.warn
             : done ? COLORS.in
                 : (hs && hs.action === 'in' ? COLORS.in : COLORS.out);
 
@@ -351,7 +419,8 @@
         const cx = x + b.width + 4, cy = y + 18, rad = 16;
         let prog = 0, hint = '';
         if (hs.phase === 'done') { prog = 1; }
-        else if (!hs.blinked) { prog = 0.15; hint = I18N.t('liveness_blink'); }
+        else if (hs.phase === 'checking') { prog = 0.35; hint = I18N.t('liveness_checking'); }
+        else if (hs.phase === 'spoof') { prog = 1; hint = I18N.t('liveness_failed'); }
         else {
             prog = Math.min(1, (performance.now() - hs.startTs) / HOLD_MS);
             hint = I18N.t(hs.action === 'in' ? 'clock_in_btn' : 'clock_out_btn');
@@ -407,7 +476,7 @@
             // track 改绑了不同员工（人换了 / 误识别跳变）→ 重置该 track 的 hold
             if (d.empId !== emp.id) {
                 d.empId = emp.id; d.name = emp.name;
-                d.action = null; d.startTs = now; d.blinked = false; d.eyesOpenSeen = false; d.phase = 'hold';
+                d.action = null; d.startTs = now; d.livePassed = !settings.liveness; d.liveScore = 0; d.phase = 'hold';
             }
             d.confidence = result.confidence;
 
@@ -417,12 +486,15 @@
             // 冷却中：该员工刚打过卡 → 这张脸保持 done 展示 ✓（哪怕是另一张脸/另一个 track）
             const last = cooldown.get(emp.id);
             if (last && Date.now() - last < settings.clockCooldownMs) {
-                d.phase = 'done'; d.blinked = true; d.eyesOpenSeen = true;
+                d.phase = 'done'; d.livePassed = true;
                 if (d.action == null) d.action = 'in';
                 continue;
             }
-            // 这张脸已完成本轮打卡，等离开或冷却结束
-            if (d.phase === 'done') continue;
+            // 这张脸已完成本轮打卡；冷却刚到期 → 重置状态，下帧开启新一轮
+            if (d.phase === 'done') {
+                d.phase = 'hold'; d.action = null; d.livePassed = false; d.startTs = now;
+                continue;
+            }
 
             // 首次：决定本次是上班还是下班
             if (d.action == null) {
@@ -431,21 +503,27 @@
                 d.startTs = now;
             }
 
-            // 活体（可选）：开启时必须先「睁」再「闭」才算一次真眨眼——
-            // 静态照片要么一直睁、要么一直闭，无法产生「睁→闭」跳变，骗不过。
-            // 关闭时（默认）直接视为已通过，对准即倒计时。
             if (settings.liveness) {
-                if (!d.blinked) {
-                    const closed = blinkNow(det);
-                    if (!closed) d.eyesOpenSeen = true;
-                    else if (d.eyesOpenSeen) { d.blinked = true; d.startTs = now; }
+                if (!d.livePassed) {
+                    d.phase = 'checking';
+                    try {
+                        const live = await predictLiveness(activeVideo, box);
+                        d.liveScore = live.live;
+                        d.livePassed = live.passed;
+                        d.phase = live.passed ? 'hold' : 'spoof';
+                        d.startTs = now;
+                    } catch (e) {
+                        d.phase = 'spoof';
+                        toast(I18N.t('liveness_model_fail', { msg: e.message }), 'err');
+                    }
+                    if (!d.livePassed) continue;
                 }
             } else {
-                d.blinked = true;
+                d.livePassed = true;
             }
 
-            // 已通过活体 + 保持足够时长 → 自动打卡
-            if (d.blinked && now - d.startTs >= HOLD_MS) {
+            // 已通过真人检测 + 保持足够时长 → 自动打卡
+            if (d.livePassed && now - d.startTs >= HOLD_MS) {
                 d.phase = 'done';
                 // 同帧/冷却双重去重：同一员工被两张脸同时拍到时只写一次
                 const c = cooldown.get(emp.id);
@@ -478,7 +556,7 @@
         if (target) {
             lastPrimaryId = target.emp.id;
             const d = target.track.data;
-            const phase = d.phase === 'done' ? 'done' : (d.blinked ? 'holding' : 'blink');
+            const phase = d.phase === 'done' ? 'done' : (d.phase === 'checking' || d.phase === 'spoof' ? d.phase : 'holding');
             renderClockStatus(target.emp, target.confidence, phase, d);
         } else if (dets.length) {
             lastPrimaryId = null;
@@ -501,7 +579,8 @@
 
         let sub;
         if (phase === 'done') sub = I18N.t('clock_recorded', { c: confidence.toFixed(0) });
-        else if (phase === 'blink') sub = I18N.t('liveness_blink');
+        else if (phase === 'checking') sub = I18N.t('liveness_checking');
+        else if (phase === 'spoof') sub = I18N.t('liveness_failed');
         else sub = I18N.t(action === 'in' ? 'hold_to_in' : 'hold_to_out');
 
         el.clockCard.innerHTML = '';
@@ -984,6 +1063,12 @@
         if (el.livenessToggle) {
             el.livenessToggle.addEventListener('change', () => {
                 settings = tmsDB.saveSettings({ liveness: el.livenessToggle.checked });
+                tracker.clear();
+                lastClockDets = [];
+                lastClockKey = null;
+                if (settings.liveness) {
+                    initAntiSpoof().catch(e => toast(I18N.t('liveness_model_fail', { msg: e.message }), 'err'));
+                }
             });
         }
         el.empName.addEventListener('keydown', (e) => { if (e.key === 'Enter') openEnroll(); });

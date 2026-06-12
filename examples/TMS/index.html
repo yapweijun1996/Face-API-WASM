@@ -367,8 +367,8 @@
             <h2 data-i18n="security_title">🛡 防伪</h2>
             <label class="toggle-row" for="livenessToggle">
                 <div>
-                    <div class="toggle-title" data-i18n="liveness_label">活体检测（眨眼防照片）</div>
-                    <div class="toggle-desc" data-i18n="liveness_desc">开启后，打卡前必须眨一次眼，打印照片 / 截图骗不过。默认关闭，演示更快。</div>
+                    <div class="toggle-title" data-i18n="liveness_label">真人检测（ONNX 防照片 / 屏幕）</div>
+                    <div class="toggle-desc" data-i18n="liveness_desc">开启后，系统会用本地 ONNX 模型判断人脸是真人、照片还是屏幕回放。默认关闭，演示更快。</div>
                 </div>
                 <input id="livenessToggle" type="checkbox" class="switch" />
             </label>
@@ -406,6 +406,7 @@
 <script src="../../js/lib/face-api.js"></script>
 <script src="../../js/core/FaceRegistrationManager.js"></script>
 <script src="../../js/core/FaceMatcher.js"></script>
+<script src="./js/lib/ort.min.js"></script>
 
 <!-- TMS 自己的存储与逻辑 -->
 <script src="./js/tms-i18n.js"></script>

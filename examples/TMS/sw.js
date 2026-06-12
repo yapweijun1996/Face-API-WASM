@@ -13,7 +13,7 @@
  *  skipWaiting + controllerchange → 页面自动 reload，运行最新代码。
  */
 
-const VERSION = 'tms-v2';
+const VERSION = 'tms-v3';
 const APP_CACHE = `app-${VERSION}`;
 const STATIC_CACHE = `static-${VERSION}`;
 
@@ -59,6 +59,7 @@ self.addEventListener('fetch', (event) => {
     const url = new URL(req.url);
     const isHeavy =
         url.pathname.includes('/models/') ||
+        url.pathname.endsWith('/ort-wasm-simd-threaded.wasm') ||
         url.pathname.includes('/js/lib/') ||
         url.pathname.includes('/js/core/');
 
