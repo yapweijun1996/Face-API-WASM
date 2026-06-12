@@ -24,7 +24,8 @@ const DEFAULT_SETTINGS = {
     enrollCaptures: 12,         // 注册时采集的帧数
     workStart: '09:00',         // 上班时间
     workEnd: '18:00',           // 下班时间
-    graceMin: 10                // 迟到宽限（分钟）
+    graceMin: 10,               // 迟到宽限（分钟）
+    liveness: false             // 活体检测（眨眼防伪）：默认关闭，用户可在设置页手动开启
 };
 
 class TmsDB {

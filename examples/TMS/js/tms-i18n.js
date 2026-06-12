@@ -80,6 +80,9 @@ const I18N = (() => {
             no_records: 'No records',
             sensitivity_title: '⚙️ Recognition sensitivity',
             threshold_label: 'Match threshold {v} (lower = stricter)',
+            security_title: '🛡 Anti-spoofing',
+            liveness_label: 'Liveness check (blink to defeat photos)',
+            liveness_desc: 'When on, a blink is required before clocking — printed photos and screenshots won’t pass. Off by default for a faster demo.',
             settings_save_fail: 'Settings apply for this session only — saving failed (private mode or storage full)',
             dash: '—'
         },
@@ -150,6 +153,9 @@ const I18N = (() => {
             no_records: '暂无记录',
             sensitivity_title: '⚙️ 识别灵敏度',
             threshold_label: '匹配阈值 {v}（越小越严格）',
+            security_title: '🛡 防伪',
+            liveness_label: '活体检测（眨眼防照片）',
+            liveness_desc: '开启后，打卡前必须眨一次眼，打印照片 / 截图骗不过。默认关闭，演示更快。',
             settings_save_fail: '设置仅本次会话生效——保存失败（隐私模式或存储已满）',
             dash: '—'
         }

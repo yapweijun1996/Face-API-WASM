@@ -37,10 +37,22 @@
     // 实时打卡（自动）+ 活体检测状态
     const HOLD_MS = 1500;             // 对准保持多久自动打卡
     const BLINK_EAR = 0.21;           // 眼睛纵横比低于此值视为闭眼（眨眼）
-    let lastClockDets = [];          // 最近一帧所有检测到的脸：[{ box, match }]（多人）
-    const holdStates = new Map();    // empId -> 每张脸独立的 hold 状态
+    let lastClockDets = [];          // 最近一帧所有检测到的脸：[{ box, match, hold }]（多人）
+    // 按「物理人脸位置」追踪，每个 track 的 .data 挂独立 hold/活体/倒计时；
+    // 取代旧的「按员工 id」存状态——根治同一员工被两张脸（本人+照片/双胞胎）共享 hold。
+    const tracker = new FaceTracker({ maxAgeMs: 1200, iouThreshold: 0.2 });
     let particles = [];              // 打卡成功的庆祝粒子
     let lastPrimaryId = null;        // 侧边卡片当前展示的员工（用于迟滞，避免抖动）
+
+    // 叠加层颜色单一来源（与 CSS 的 --in/--out/--accent 对应）
+    const COLORS = {
+        in: '#22c55e',
+        out: '#f43f5e',
+        accent: '#22d3ee',
+        unmatched: 'rgba(148,163,184,.75)'
+    };
+    // canvas 未镜像、视频 CSS 镜像：把检测坐标的 x 翻转过来对齐镜像画面
+    const mirrorX = (overlayW, x, w) => overlayW - x - w;
 
     const detectorOptions = () => new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.5 });
 
@@ -55,7 +67,7 @@
             'enrollModal', 'enrollVideo', 'enrollOverlay', 'enrollBar', 'enrollText',
             'enrollThumbs', 'enrollCancel', 'enrollTitle',
             'recordsBody', 'recordsSummary', 'recordsEmpty', 'exportCsvBtn', 'clearRecordsBtn',
-            'thresholdInput', 'thresholdVal', 'thresholdLabel',
+            'thresholdInput', 'thresholdVal', 'thresholdLabel', 'livenessToggle',
             'workStartInput', 'workEndInput', 'graceInput',
             'statInNow', 'statLate', 'statStaff', 'whosInList', 'whosInEmpty', 'weeklyChart'
         ].forEach(id => { el[id] = $(id); });
@@ -149,9 +161,9 @@
             meanDescriptor: e.meanDescriptor
         })));
         empPhotos = new Map(employees.map(e => [e.id, e.photo]));
-        // 清理已删除员工残留的冷却/hold 记录，避免随增删循环无限增长
+        // 清理已删除员工残留的冷却记录，避免随增删循环无限增长
+        // （hold 状态现在挂在 track 上，随人脸离开自动淘汰，无需在此清理）
         for (const id of [...cooldown.keys()]) if (!empPhotos.has(id)) cooldown.delete(id);
-        for (const id of [...holdStates.keys()]) if (!empPhotos.has(id)) holdStates.delete(id);
         el.empCountPill.textContent = I18N.t('emp_count', { n: employees.length });
         return employees;
     }
@@ -179,8 +191,8 @@
         if (activeVideo) { activeVideo.srcObject = null; activeVideo = null; }
         // 清空逐帧的临时状态，避免下次开摄像头时：
         //  - 用旧坐标画出残影框（overlay 尺寸可能已变）
-        //  - 冻结的 hold（旧 startTs）在回到打卡页第一帧就「秒打卡」并绕过活体
-        holdStates.clear();
+        //  - 冻结的 track（旧 startTs）在回到打卡页第一帧就「秒打卡」并绕过活体
+        tracker.clear();
         lastClockDets = [];
         particles = [];
         lastClockKey = null;
@@ -241,8 +253,8 @@
         ctx.clearRect(0, 0, overlay.width, overlay.height);
         if (!det) return;
         const b = det.detection.box;
-        const x = overlay.width - b.x - b.width;
-        ctx.strokeStyle = '#22d3ee';
+        const x = mirrorX(overlay.width, b.x, b.width);
+        ctx.strokeStyle = COLORS.accent;
         ctx.lineWidth = 3;
         ctx.strokeRect(x, b.y, b.width, b.height);
     }
@@ -266,8 +278,8 @@
     function spawnCelebration(cx, cy, type) {
         if (particles.length > 320) return;   // 多人同时打卡时给粒子数封顶
         const palette = type === 'in'
-            ? ['#22c55e', '#4ade80', '#22d3ee', '#a3e635']
-            : ['#f43f5e', '#fb7185', '#22d3ee', '#fbbf24'];
+            ? [COLORS.in, '#4ade80', COLORS.accent, '#a3e635']
+            : [COLORS.out, '#fb7185', COLORS.accent, '#fbbf24'];
         for (let i = 0; i < 40; i++) {
             const ang = Math.random() * Math.PI * 2;
             const speed = 2 + Math.random() * 6;
@@ -302,20 +314,20 @@
         ctx.clearRect(0, 0, overlay.width, overlay.height);
         drawParticles(ctx);          // 粒子始终绘制（即使人脸已离开）
         for (const item of lastClockDets) {
-            drawFace(ctx, overlay, item.box, item.match);
+            drawFace(ctx, overlay, item.box, item.match, item.hold);
         }
     }
 
     // 画单张脸：人脸框 +（若已识别）姓名标签 + 倒计时环 + 提示
-    function drawFace(ctx, overlay, b, match) {
-        const x = overlay.width - b.x - b.width;     // 翻转 x 对齐镜像视频
+    // hs 为该脸对应 track 的 .data（hold/活体/倒计时），未识别时为 null
+    function drawFace(ctx, overlay, b, match, hs) {
+        const x = mirrorX(overlay.width, b.x, b.width);   // 翻转 x 对齐镜像视频
         const y = b.y;
-        const hs = match ? holdStates.get(match.emp.id) : null;
 
         const done = hs && hs.phase === 'done';
-        const color = !match ? 'rgba(148,163,184,.75)'         // 未识别：灰
-            : done ? '#22c55e'
-                : (hs && hs.action === 'in' ? '#22c55e' : '#f43f5e');
+        const color = !match ? COLORS.unmatched                // 未识别：灰
+            : done ? COLORS.in
+                : (hs && hs.action === 'in' ? COLORS.in : COLORS.out);
 
         // 人脸框
         ctx.strokeStyle = color;
@@ -367,88 +379,107 @@
     // 打卡识别（多人同时）
     // ============================================================
     async function handleClockFrameMulti(dets) {
-        const present = new Set();
-        const processed = new Set();   // 本帧已处理的 empId，挡住「同一人被两张脸匹配」导致的重复打卡
-        const drawList = [];
-        const matchedFaces = [];       // 已识别的脸，用于挑选侧边卡片
-        let justClocked = null;        // 本帧刚打卡成功者，卡片优先展示其 ✓
+        const now = performance.now();
+        // 1) 把本帧人脸框关联到稳定 track（result[i] ↔ dets[i]）
+        const boxes = dets.map(d => d.detection.box);
+        const tracks = tracker.update(boxes, now);
 
-        for (const det of dets) {
+        const drawList = [];
+        const matchedFaces = [];       // { track, emp, confidence, box }，用于挑选侧边卡片
+        let justClocked = null;        // 本帧刚打卡成功者，卡片优先展示其 ✓
+        const clockedThisFrame = new Set();  // 本帧已写库的 empId，挡同帧两张脸重复写
+
+        for (let i = 0; i < dets.length; i++) {
+            const det = dets[i];
+            const track = tracks[i];
             const box = det.detection.box;
             const result = matcher ? matcher.findBestMatch(det.descriptor) : { status: 'unknown' };
 
             if (result.status !== 'matched') {
-                drawList.push({ box, match: null });
+                track.data.empId = null;   // 这张脸暂不认识，清掉旧绑定
+                drawList.push({ box, match: null, hold: null });
                 continue;
             }
 
             const emp = result.user;
-            present.add(emp.id);
-            drawList.push({ box, match: { emp, confidence: result.confidence } });
-            matchedFaces.push({ emp, confidence: result.confidence, box });
+            const d = track.data;
 
-            // 同一人本帧已处理过（照片/双胞胎/反射造成的第二张脸）→ 只画框，不再推进 hold
-            if (processed.has(emp.id)) continue;
-            processed.add(emp.id);
+            // track 改绑了不同员工（人换了 / 误识别跳变）→ 重置该 track 的 hold
+            if (d.empId !== emp.id) {
+                d.empId = emp.id; d.name = emp.name;
+                d.action = null; d.startTs = now; d.blinked = false; d.eyesOpenSeen = false; d.phase = 'hold';
+            }
+            d.confidence = result.confidence;
 
-            // 冷却中：刚打过卡，保持 done 态展示 ✓
+            drawList.push({ box, match: { emp, confidence: result.confidence }, hold: d });
+            matchedFaces.push({ track, emp, confidence: result.confidence, box });
+
+            // 冷却中：该员工刚打过卡 → 这张脸保持 done 展示 ✓（哪怕是另一张脸/另一个 track）
             const last = cooldown.get(emp.id);
             if (last && Date.now() - last < settings.clockCooldownMs) {
-                const prev = holdStates.get(emp.id);
-                holdStates.set(emp.id, {
-                    id: emp.id, name: emp.name,
-                    action: prev ? prev.action : 'in',
-                    phase: 'done', blinked: true, eyesOpenSeen: true, startTs: 0, lastSeen: performance.now()
-                });
+                d.phase = 'done'; d.blinked = true; d.eyesOpenSeen = true;
+                if (d.action == null) d.action = 'in';
                 continue;
             }
+            // 这张脸已完成本轮打卡，等离开或冷却结束
+            if (d.phase === 'done') continue;
 
-            // 每张脸独立的 hold 状态
-            let hs = holdStates.get(emp.id);
-            if (!hs || hs.phase === 'done') {
+            // 首次：决定本次是上班还是下班
+            if (d.action == null) {
                 const lastRec = await tmsDB.getLastAttendance(emp.id);
-                const nextType = lastRec && lastRec.type === 'in' ? 'out' : 'in';
-                hs = { id: emp.id, name: emp.name, action: nextType, startTs: performance.now(), blinked: false, eyesOpenSeen: false, phase: 'hold', lastSeen: performance.now() };
-                holdStates.set(emp.id, hs);
+                d.action = lastRec && lastRec.type === 'in' ? 'out' : 'in';
+                d.startTs = now;
             }
-            hs.lastSeen = performance.now();
 
-            // 活体：必须先看到「睁眼」再看到「闭眼」才算一次真眨眼——
+            // 活体（可选）：开启时必须先「睁」再「闭」才算一次真眨眼——
             // 静态照片要么一直睁、要么一直闭，无法产生「睁→闭」跳变，骗不过。
-            if (!hs.blinked) {
-                const closed = blinkNow(det);
-                if (!closed) hs.eyesOpenSeen = true;
-                else if (hs.eyesOpenSeen) { hs.blinked = true; hs.startTs = performance.now(); }
+            // 关闭时（默认）直接视为已通过，对准即倒计时。
+            if (settings.liveness) {
+                if (!d.blinked) {
+                    const closed = blinkNow(det);
+                    if (!closed) d.eyesOpenSeen = true;
+                    else if (d.eyesOpenSeen) { d.blinked = true; d.startTs = now; }
+                }
+            } else {
+                d.blinked = true;
             }
 
-            // 已眨眼 + 保持足够时长 → 自动打卡
-            if (hs.blinked && performance.now() - hs.startTs >= HOLD_MS) {
-                hs.phase = 'done';
-                if (await doClock(emp, hs.action, box)) justClocked = { emp, confidence: result.confidence };
+            // 已通过活体 + 保持足够时长 → 自动打卡
+            if (d.blinked && now - d.startTs >= HOLD_MS) {
+                d.phase = 'done';
+                // 同帧/冷却双重去重：同一员工被两张脸同时拍到时只写一次
+                const c = cooldown.get(emp.id);
+                const inCooldown = c && Date.now() - c < settings.clockCooldownMs;
+                if (!inCooldown && !clockedThisFrame.has(emp.id)) {
+                    clockedThisFrame.add(emp.id);
+                    if (await doClock(emp, d.action, box)) {
+                        justClocked = { emp, confidence: result.confidence };
+                    } else {
+                        // 写库失败 → 回退该 track，使其下一轮重新倒计时打卡（保留已通过的活体）
+                        d.phase = 'hold'; d.startTs = now;
+                        clockedThisFrame.delete(emp.id);
+                    }
+                }
             }
         }
 
         lastClockDets = drawList;
+        // 过期 track 由 tracker 自身淘汰，无需手动清理
 
-        // 清理离开画面超过 1.2s 的 hold 状态（容忍偶发漏检，不会一帧丢失就重置倒计时）
-        for (const [id, hs] of holdStates) {
-            if (!present.has(id) && performance.now() - (hs.lastSeen || 0) > 1200) holdStates.delete(id);
-        }
-
-        // 侧边卡片：优先展示刚打卡成功者；否则展示「上一个 primary（若仍在画面）」或最大的脸（迟滞，避免两张相近大小的脸来回抖动）
-        let target = justClocked;
+        // 侧边卡片：优先刚打卡成功者；否则保持上一个 primary（仍在画面时）或最大的脸
+        //（迟滞：仅当别的脸明显更大 >1.3x 才切换，避免两张相近大小的脸来回抖动）
+        let target = justClocked ? matchedFaces.find(f => f.emp.id === justClocked.emp.id) : null;
         if (!target && matchedFaces.length) {
             const sticky = matchedFaces.find(f => f.emp.id === lastPrimaryId);
             const biggest = matchedFaces.reduce((a, b) => (b.box.width * b.box.height > a.box.width * a.box.height ? b : a));
-            // 仅当别的脸明显更大（>1.3x）才切换，否则保持上一个
             target = (sticky && biggest.box.width * biggest.box.height < sticky.box.width * sticky.box.height * 1.3) ? sticky : biggest;
         }
 
         if (target) {
             lastPrimaryId = target.emp.id;
-            const hs = holdStates.get(target.emp.id);
-            const phase = hs ? (hs.phase === 'done' ? 'done' : (hs.blinked ? 'holding' : 'blink')) : 'holding';
-            renderClockStatus(target.emp, target.confidence, phase, hs);
+            const d = target.track.data;
+            const phase = d.phase === 'done' ? 'done' : (d.blinked ? 'holding' : 'blink');
+            renderClockStatus(target.emp, target.confidence, phase, d);
         } else if (dets.length) {
             lastPrimaryId = null;
             showClockNoMatch();
@@ -528,14 +559,14 @@
         try {
             await tmsDB.addAttendance({ employeeId: emp.id, employeeName: emp.name, type, status });
         } catch (e) {
-            holdStates.delete(emp.id);   // 仅回退该员工，不影响画面里其他人
+            // 写库失败：返回 false，由调用方回退该 track 的 hold 让其重试（不影响其他人）
             toast(I18N.t('clock_fail', { msg: e.message }), 'err');
             return false;
         }
         cooldown.set(emp.id, Date.now());
         // 从这张脸的位置迸发庆祝粒子（坐标翻转对齐镜像视频）
         if (box && el.clockOverlay) {
-            spawnCelebration(el.clockOverlay.width - box.x - box.width / 2, box.y + box.height / 2, type);
+            spawnCelebration(mirrorX(el.clockOverlay.width, box.x, box.width / 2), box.y + box.height / 2, type);
         }
         beep(type === 'in' ? 880 : 520);
         speak(I18N.t(type === 'in' ? 'voice_in' : 'voice_out', { name: emp.name }));
@@ -752,19 +783,27 @@
         el.recordsSummary.textContent = summarizeHours(recs);
     }
 
-    /** 按员工配对 in/out 估算今日工时 */
-    function summarizeHours(recs) {
-        const today = new Date(); today.setHours(0, 0, 0, 0);
-        const byEmp = {};
-        recs.filter(r => r.timestamp >= today.getTime())
+    /** 把打卡记录按员工配对成工时（in→out 累加）。配对逻辑的唯一来源。
+     *  @returns {Map} empId -> { name, openIn(未配对的上班时间戳|null), ms(已配对工时) }
+     *  startTs/endTs 限定区间（含 start、不含 end）；缺省则全部记录。 */
+    function pairAttendance(recs, startTs = -Infinity, endTs = Infinity) {
+        const byEmp = new Map();
+        recs.filter(r => r.timestamp >= startTs && r.timestamp < endTs)
             .sort((a, b) => a.timestamp - b.timestamp)
             .forEach(r => {
-                (byEmp[r.employeeId] = byEmp[r.employeeId] || { name: r.employeeName, openIn: null, ms: 0 });
-                const e = byEmp[r.employeeId];
+                let e = byEmp.get(r.employeeId);
+                if (!e) { e = { name: r.employeeName, openIn: null, ms: 0 }; byEmp.set(r.employeeId, e); }
                 if (r.type === 'in') e.openIn = r.timestamp;
-                else if (r.type === 'out' && e.openIn) { e.ms += r.timestamp - e.openIn; e.openIn = null; }
+                else if (r.type === 'out' && e.openIn != null) { e.ms += r.timestamp - e.openIn; e.openIn = null; }
             });
-        const parts = Object.values(byEmp).map(e => {
+        return byEmp;
+    }
+
+    /** 按员工配对 in/out 估算今日工时（文字摘要） */
+    function summarizeHours(recs) {
+        const today = new Date(); today.setHours(0, 0, 0, 0);
+        const byEmp = pairAttendance(recs, today.getTime());
+        const parts = [...byEmp.values()].map(e => {
             const h = (e.ms / 3600000);
             return I18N.t('hours_item', { name: e.name, h: h.toFixed(1) }) + (e.openIn ? I18N.t('on_duty') : '');
         });
@@ -830,18 +869,11 @@
     // ============================================================
     /** 把某区间内的打卡按员工配对成工时(ms)，未配对的 in 若仍在岗则算到 untilTs */
     function workedMsInRange(recs, startTs, endTs, untilTs) {
-        const byEmp = {};
-        recs.filter(r => r.timestamp >= startTs && r.timestamp < endTs)
-            .sort((a, b) => a.timestamp - b.timestamp)
-            .forEach(r => {
-                const e = (byEmp[r.employeeId] = byEmp[r.employeeId] || { openIn: null, ms: 0 });
-                if (r.type === 'in') e.openIn = r.timestamp;
-                else if (r.type === 'out' && e.openIn) { e.ms += r.timestamp - e.openIn; e.openIn = null; }
-            });
+        const byEmp = pairAttendance(recs, startTs, endTs);
         let total = 0;
-        Object.values(byEmp).forEach(e => {
+        byEmp.forEach(e => {
             total += e.ms;
-            if (e.openIn && untilTs) total += Math.max(0, untilTs - e.openIn);  // 仍在岗
+            if (e.openIn != null && untilTs) total += Math.max(0, untilTs - e.openIn);  // 仍在岗
         });
         return total;
     }
@@ -916,6 +948,7 @@
         el.workStartInput.value = settings.workStart;
         el.workEndInput.value = settings.workEnd;
         el.graceInput.value = settings.graceMin;
+        if (el.livenessToggle) el.livenessToggle.checked = !!settings.liveness;
     }
 
     // ============================================================
@@ -948,6 +981,11 @@
         el.workStartInput.addEventListener('change', () => { settings = tmsDB.saveSettings({ workStart: el.workStartInput.value || '09:00' }); });
         el.workEndInput.addEventListener('change', () => { settings = tmsDB.saveSettings({ workEnd: el.workEndInput.value || '18:00' }); });
         el.graceInput.addEventListener('change', () => { settings = tmsDB.saveSettings({ graceMin: parseInt(el.graceInput.value, 10) || 0 }); });
+        if (el.livenessToggle) {
+            el.livenessToggle.addEventListener('change', () => {
+                settings = tmsDB.saveSettings({ liveness: el.livenessToggle.checked });
+            });
+        }
         el.empName.addEventListener('keydown', (e) => { if (e.key === 'Enter') openEnroll(); });
 
         // 页面隐藏时释放摄像头（移动端切后台）

@@ -158,6 +158,23 @@
     .row-actions { display: flex; gap: 10px; margin-top: 12px; }
     .row-actions .btn { flex: 1; }
 
+    /* ---------- 开关（防伪等设置项） ---------- */
+    .toggle-row { display: flex; align-items: center; gap: 14px; cursor: pointer; }
+    .toggle-row > div { flex: 1; min-width: 0; }
+    .toggle-title { font-weight: 600; }
+    .toggle-desc { font-size: 12px; color: var(--muted); margin-top: 4px; line-height: 1.45; }
+    .switch {
+        appearance: none; -webkit-appearance: none; flex-shrink: 0;
+        width: 48px; height: 28px; border-radius: 999px; background: var(--line);
+        position: relative; cursor: pointer; transition: background .2s;
+    }
+    .switch:checked { background: var(--in); }
+    .switch::after {
+        content: ''; position: absolute; top: 3px; left: 3px;
+        width: 22px; height: 22px; border-radius: 50%; background: #fff; transition: transform .2s;
+    }
+    .switch:checked::after { transform: translateX(20px); }
+
     /* ---------- 底部导航 ---------- */
     nav {
         position: sticky; bottom: 0; z-index: 20;
@@ -346,6 +363,16 @@
                 <input id="thresholdInput" type="range" min="0.35" max="0.7" step="0.01" />
             </div>
         </div>
+        <div class="card">
+            <h2 data-i18n="security_title">🛡 防伪</h2>
+            <label class="toggle-row" for="livenessToggle">
+                <div>
+                    <div class="toggle-title" data-i18n="liveness_label">活体检测（眨眼防照片）</div>
+                    <div class="toggle-desc" data-i18n="liveness_desc">开启后，打卡前必须眨一次眼，打印照片 / 截图骗不过。默认关闭，演示更快。</div>
+                </div>
+                <input id="livenessToggle" type="checkbox" class="switch" />
+            </label>
+        </div>
     </section>
 </main>
 
@@ -383,6 +410,7 @@
 <!-- TMS 自己的存储与逻辑 -->
 <script src="./js/tms-i18n.js"></script>
 <script src="./js/tms-db.js"></script>
+<script src="./js/tms-tracker.js"></script>
 <script src="./js/tms-app.js"></script>
 </body>
 </html>
