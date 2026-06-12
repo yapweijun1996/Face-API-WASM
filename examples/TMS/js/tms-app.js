@@ -178,6 +178,7 @@
     // 统一检测循环（按 appMode 分流）
     // ============================================================
     function startLoop(overlay) {
+        if (loopHandle) { cancelAnimationFrame(loopHandle); loopHandle = null; }   // 防止两条循环并存
         const ctx = overlay ? overlay.getContext('2d') : null;
         detecting = true;
         let busy = false;
@@ -202,7 +203,7 @@
 
                     if (appMode === 'clock') {
                         lastClockDet = det || null;
-                        if (det) handleClockFrame(det);
+                        if (det) await handleClockFrame(det);   // await：避免 busy 提前释放导致重入/重复打卡
                         else { holdState = null; showClockIdle(); }
                     } else if (appMode === 'enroll') {
                         if (ctx) drawBox(ctx, overlay, det);
@@ -406,10 +407,18 @@
     }
 
     async function doClock(emp, type) {
-        cooldown.set(emp.id, Date.now());   // 先置冷却，挡住下一帧重入
         lastClockKey = null;
         const status = computeStatus(type, Date.now());
-        await tmsDB.addAttendance({ employeeId: emp.id, employeeName: emp.name, type, status });
+        // handleClockFrame 现在是被 await 的，这里不会有并发重入；
+        // 写库成功后再置冷却 + 反馈，写失败则回退状态让用户可重试。
+        try {
+            await tmsDB.addAttendance({ employeeId: emp.id, employeeName: emp.name, type, status });
+        } catch (e) {
+            holdState = null;   // 允许下一轮重新对准重试
+            toast(I18N.t('clock_fail', { msg: e.message }), 'err');
+            return;
+        }
+        cooldown.set(emp.id, Date.now());
         beep(type === 'in' ? 880 : 520);
         speak(I18N.t(type === 'in' ? 'voice_in' : 'voice_out', { name: emp.name }));
         toast(I18N.t(type === 'in' ? 'toast_clock_in' : 'toast_clock_out', { name: emp.name }), 'ok');
@@ -559,7 +568,7 @@
             const m = document.createElement('div'); m.className = 'emp-meta';
             m.textContent = I18N.t('emp_meta', {
                 dept: emp.department || I18N.t('dash'),
-                n: emp.descriptors.length,
+                n: (emp.descriptors || []).length,
                 date: new Date(emp.enrolledAt).toLocaleDateString()
             });
             info.append(n, m);
@@ -656,7 +665,9 @@
         setTimeout(() => URL.revokeObjectURL(url), 1000);
     }
     const csvCell = (v) => {
-        const s = String(v ?? '');
+        let s = String(v ?? '');
+        // 防公式注入：以 = + - @ Tab CR 开头的单元格在 Excel/Sheets 会被当公式执行（员工姓名可控）。
+        if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
         return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
     };
 

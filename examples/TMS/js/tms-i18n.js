@@ -43,6 +43,7 @@ const I18N = (() => {
             voice_in: 'Welcome, {name}',
             voice_out: 'Goodbye, {name}',
             camera_error: 'Cannot access camera: {msg}',
+            clock_fail: 'Clock failed: {msg}',
             toast_clock_in: '{name} clocked in',
             toast_clock_out: '{name} clocked out',
 
@@ -111,6 +112,7 @@ const I18N = (() => {
             voice_in: '欢迎，{name}',
             voice_out: '再见，{name}',
             camera_error: '无法访问摄像头：{msg}',
+            clock_fail: '打卡失败：{msg}',
             toast_clock_in: '{name} 上班打卡成功',
             toast_clock_out: '{name} 下班打卡成功',
 
@@ -165,7 +167,8 @@ const I18N = (() => {
 
     function t(key, vars) {
         let s = (DICT[lang] && DICT[lang][key]) ?? (DICT.en[key]) ?? key;
-        if (vars) for (const k in vars) s = s.replaceAll('{' + k + '}', vars[k]);
+        // 用函数替换，避免值里的 $&/$`/$' 等被当成 replace 的特殊模式（例如人名含 $）。
+        if (vars) for (const k in vars) s = s.replaceAll('{' + k + '}', () => String(vars[k]));
         return s;
     }
 

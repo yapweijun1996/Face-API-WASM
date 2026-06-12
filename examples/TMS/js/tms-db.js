@@ -60,6 +60,13 @@ class TmsDB {
         return new Promise((resolve, reject) => {
             request.onsuccess = () => resolve(request.result);
             request.onerror = () => reject(request.error);
+            // 事务被 abort（如 QuotaExceededError）时 request 可能不 reject，
+            // 监听事务 abort/error，避免 await 永久挂起。
+            const tx = request.transaction;
+            if (tx) {
+                tx.onabort = () => reject(tx.error || new Error('IndexedDB transaction aborted'));
+                tx.onerror = () => reject(tx.error || new Error('IndexedDB transaction error'));
+            }
         });
     }
 
@@ -113,10 +120,21 @@ class TmsDB {
         return all.sort((a, b) => b.timestamp - a.timestamp);
     }
 
-    /** 某员工最近一条打卡记录（用于判断下一次是 in 还是 out） */
+    /** 某员工最近一条打卡记录（用于判断下一次是 in 还是 out）
+     *  用 employeeId 索引 + 游标只取最新一条，避免每次都 getAll+排序整个库。 */
     async getLastAttendance(employeeId) {
-        const all = await this.getAllAttendance();
-        return all.find(r => r.employeeId === String(employeeId)) || null;
+        await this.init();
+        return new Promise((resolve, reject) => {
+            const idx = this._tx(STORE_ATTENDANCE, 'readonly').index('employeeId');
+            const req = idx.openCursor(IDBKeyRange.only(String(employeeId)), 'prev');
+            req.onsuccess = () => {
+                const cur = req.result;
+                // 同一 employeeId 下索引按主键(recordId 自增)升序，prev 取到的是
+                // 最大 recordId，即最近插入的一条。
+                resolve(cur ? cur.value : null);
+            };
+            req.onerror = () => reject(req.error);
+        });
     }
 
     async clearAttendance() {
@@ -138,7 +156,12 @@ class TmsDB {
 
     saveSettings(patch) {
         const next = { ...this.getSettings(), ...patch };
-        localStorage.setItem(SETTINGS_KEY, JSON.stringify(next));
+        try {
+            // Safari 隐私模式 / 配额满时 setItem 会同步抛错，吞掉避免调用方崩溃。
+            localStorage.setItem(SETTINGS_KEY, JSON.stringify(next));
+        } catch (e) {
+            console.warn('TMS: failed to persist settings', e);
+        }
         return next;
     }
 }
