@@ -132,6 +132,14 @@
     th { color: var(--muted); font-weight: 600; font-size: 12px; }
     .cell-in { color: var(--in); font-weight: 600; }
     .cell-out { color: var(--out); font-weight: 600; }
+    .cell-muted { color: var(--muted); }
+    .status-badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; white-space: nowrap; }
+    .status-badge.late { background: rgba(244,63,94,.18); color: #fb7185; }
+    .status-badge.early { background: rgba(255,165,2,.18); color: #ffb454; }
+    .status-badge.overtime { background: rgba(34,211,238,.18); color: var(--accent); }
+    .sched-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .sched-grid .field:last-child { grid-column: 1 / -1; }
+    .field input[type="time"], .field input[type="number"] { color-scheme: dark; }
     .row-actions { display: flex; gap: 10px; margin-top: 12px; }
     .row-actions .btn { flex: 1; }
 
@@ -269,7 +277,7 @@
             <div class="table-wrap">
                 <table>
                     <thead>
-                        <tr><th data-i18n="th_emp">员工</th><th data-i18n="th_type">类型</th><th data-i18n="th_date">日期</th><th data-i18n="th_time">时间</th></tr>
+                        <tr><th data-i18n="th_emp">员工</th><th data-i18n="th_type">类型</th><th data-i18n="th_date">日期</th><th data-i18n="th_time">时间</th><th data-i18n="th_status">状态</th></tr>
                     </thead>
                     <tbody id="recordsBody"></tbody>
                 </table>
@@ -278,6 +286,23 @@
             <div class="row-actions">
                 <button class="btn ghost" id="exportCsvBtn" data-i18n="export_csv">⬇ 导出 CSV</button>
                 <button class="btn danger" id="clearRecordsBtn" data-i18n="clear_records">清空记录</button>
+            </div>
+        </div>
+        <div class="card">
+            <h2 data-i18n="schedule_title">🗓 排班</h2>
+            <div class="sched-grid">
+                <div class="field">
+                    <label data-i18n="work_start">上班时间</label>
+                    <input id="workStartInput" type="time" />
+                </div>
+                <div class="field">
+                    <label data-i18n="work_end">下班时间</label>
+                    <input id="workEndInput" type="time" />
+                </div>
+                <div class="field">
+                    <label data-i18n="grace_min">迟到宽限（分钟）</label>
+                    <input id="graceInput" type="number" min="0" max="120" />
+                </div>
             </div>
         </div>
         <div class="card">

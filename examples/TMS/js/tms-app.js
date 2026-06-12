@@ -53,7 +53,8 @@
             'enrollModal', 'enrollVideo', 'enrollOverlay', 'enrollBar', 'enrollText',
             'enrollThumbs', 'enrollCancel', 'enrollTitle',
             'recordsBody', 'recordsSummary', 'recordsEmpty', 'exportCsvBtn', 'clearRecordsBtn',
-            'thresholdInput', 'thresholdVal', 'thresholdLabel'
+            'thresholdInput', 'thresholdVal', 'thresholdLabel',
+            'workStartInput', 'workEndInput', 'graceInput'
         ].forEach(id => { el[id] = $(id); });
     }
 
@@ -388,10 +389,25 @@
         return wrap;
     }
 
+    // 根据排班计算打卡状态：迟到 / 早退 / 加班 / 正常
+    function parseHM(s) { const [h, m] = String(s || '0:0').split(':').map(Number); return (h || 0) * 60 + (m || 0); }
+    function computeStatus(type, ts) {
+        const d = new Date(ts);
+        const mins = d.getHours() * 60 + d.getMinutes();
+        const start = parseHM(settings.workStart);
+        const end = parseHM(settings.workEnd);
+        if (type === 'in') return mins > start + (settings.graceMin || 0) ? 'late' : 'ontime';
+        // out
+        if (mins < end) return 'early';
+        if (mins > end + 30) return 'overtime';
+        return 'ontime';
+    }
+
     async function doClock(emp, type) {
         cooldown.set(emp.id, Date.now());   // 先置冷却，挡住下一帧重入
         lastClockKey = null;
-        await tmsDB.addAttendance({ employeeId: emp.id, employeeName: emp.name, type });
+        const status = computeStatus(type, Date.now());
+        await tmsDB.addAttendance({ employeeId: emp.id, employeeName: emp.name, type, status });
         beep(type === 'in' ? 880 : 520);
         speak(I18N.t(type === 'in' ? 'voice_in' : 'voice_out', { name: emp.name }));
         toast(I18N.t(type === 'in' ? 'toast_clock_in' : 'toast_clock_out', { name: emp.name }), 'ok');
@@ -585,6 +601,19 @@
                 if (i === 1) td.className = r.type === 'in' ? 'cell-in' : 'cell-out';
                 tr.appendChild(td);
             });
+            // 状态徽章
+            const stTd = document.createElement('td');
+            const st = r.status || 'ontime';
+            if (st !== 'ontime') {
+                const badge = document.createElement('span');
+                badge.className = 'status-badge ' + st;
+                badge.textContent = I18N.t('status_' + st);
+                stTd.appendChild(badge);
+            } else {
+                stTd.textContent = I18N.t('status_ontime');
+                stTd.className = 'cell-muted';
+            }
+            tr.appendChild(stTd);
             el.recordsBody.appendChild(tr);
         });
 
@@ -667,6 +696,9 @@
         if (!el.thresholdInput) return;
         el.thresholdInput.value = settings.matchThreshold;
         el.thresholdLabel.textContent = I18N.t('threshold_label', { v: settings.matchThreshold.toFixed(2) });
+        el.workStartInput.value = settings.workStart;
+        el.workEndInput.value = settings.workEnd;
+        el.graceInput.value = settings.graceMin;
     }
 
     // ============================================================
@@ -694,6 +726,9 @@
                 if (matcher) matcher.config.matchThreshold = v;
             });
         }
+        el.workStartInput.addEventListener('change', () => { settings = tmsDB.saveSettings({ workStart: el.workStartInput.value || '09:00' }); });
+        el.workEndInput.addEventListener('change', () => { settings = tmsDB.saveSettings({ workEnd: el.workEndInput.value || '18:00' }); });
+        el.graceInput.addEventListener('change', () => { settings = tmsDB.saveSettings({ graceMin: parseInt(el.graceInput.value, 10) || 0 }); });
         el.empName.addEventListener('keydown', (e) => { if (e.key === 'Enter') openEnroll(); });
 
         // 页面隐藏时释放摄像头（移动端切后台）

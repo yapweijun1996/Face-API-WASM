@@ -21,7 +21,10 @@ const SETTINGS_KEY = 'tms_settings';
 const DEFAULT_SETTINGS = {
     matchThreshold: 0.5,        // 距离小于此值才认定为同一人（越小越严格）
     clockCooldownMs: 60000,     // 同一人两次打卡的最小间隔，避免连续误触发
-    enrollCaptures: 12          // 注册时采集的帧数
+    enrollCaptures: 12,         // 注册时采集的帧数
+    workStart: '09:00',         // 上班时间
+    workEnd: '18:00',           // 下班时间
+    graceMin: 10                // 迟到宽限（分钟）
 };
 
 class TmsDB {
@@ -97,6 +100,7 @@ class TmsDB {
             employeeId: String(rec.employeeId),
             employeeName: rec.employeeName || '',
             type: rec.type === 'out' ? 'out' : 'in',
+            status: rec.status || 'ontime',     // ontime | late | early | overtime
             timestamp: rec.timestamp || Date.now()
         };
         const id = await this._req(this._tx(STORE_ATTENDANCE, 'readwrite').add(data));
