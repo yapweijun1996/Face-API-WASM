@@ -54,7 +54,8 @@
             'enrollThumbs', 'enrollCancel', 'enrollTitle',
             'recordsBody', 'recordsSummary', 'recordsEmpty', 'exportCsvBtn', 'clearRecordsBtn',
             'thresholdInput', 'thresholdVal', 'thresholdLabel',
-            'workStartInput', 'workEndInput', 'graceInput'
+            'workStartInput', 'workEndInput', 'graceInput',
+            'statInNow', 'statLate', 'statStaff', 'whosInList', 'whosInEmpty', 'weeklyChart'
         ].forEach(id => { el[id] = $(id); });
     }
 
@@ -124,6 +125,7 @@
         applySettingsToUi();
         renderEmployees();
         renderRecords();
+        if (document.getElementById('panel-dashboard').classList.contains('show')) renderDashboard();
         const employees = matcher ? matcher.getUserCount() : 0;
         el.empCountPill.textContent = I18N.t('emp_count', { n: employees });
         if (appMode === 'clock' && (!matcher || matcher.getUserCount() === 0)) showClockIdle();
@@ -686,7 +688,90 @@
             await renderRecords();
         } else if (tab === 'employees') {
             await renderEmployees();
+        } else if (tab === 'dashboard') {
+            await renderDashboard();
         }
+    }
+
+    // ============================================================
+    // 看板
+    // ============================================================
+    /** 把某区间内的打卡按员工配对成工时(ms)，未配对的 in 若仍在岗则算到 untilTs */
+    function workedMsInRange(recs, startTs, endTs, untilTs) {
+        const byEmp = {};
+        recs.filter(r => r.timestamp >= startTs && r.timestamp < endTs)
+            .sort((a, b) => a.timestamp - b.timestamp)
+            .forEach(r => {
+                const e = (byEmp[r.employeeId] = byEmp[r.employeeId] || { openIn: null, ms: 0 });
+                if (r.type === 'in') e.openIn = r.timestamp;
+                else if (r.type === 'out' && e.openIn) { e.ms += r.timestamp - e.openIn; e.openIn = null; }
+            });
+        let total = 0;
+        Object.values(byEmp).forEach(e => {
+            total += e.ms;
+            if (e.openIn && untilTs) total += Math.max(0, untilTs - e.openIn);  // 仍在岗
+        });
+        return total;
+    }
+
+    async function renderDashboard() {
+        const employees = await tmsDB.getAllEmployees();
+        const empMap = new Map(employees.map(e => [e.id, e]));
+        const recs = await tmsDB.getAllAttendance();   // desc
+
+        // 当前在岗：每个员工最近一条记录为 in
+        const latestByEmp = new Map();
+        recs.forEach(r => { if (!latestByEmp.has(r.employeeId)) latestByEmp.set(r.employeeId, r); });
+        const inNow = [...latestByEmp.values()].filter(r => r.type === 'in');
+
+        // 今日迟到
+        const today = new Date(); today.setHours(0, 0, 0, 0);
+        const lateToday = recs.filter(r => r.timestamp >= today.getTime() && r.type === 'in' && r.status === 'late').length;
+
+        el.statInNow.textContent = inNow.length;
+        el.statLate.textContent = lateToday;
+        el.statStaff.textContent = employees.length;
+
+        // 当前在岗列表
+        el.whosInList.innerHTML = '';
+        el.whosInEmpty.style.display = inNow.length ? 'none' : 'block';
+        inNow.forEach(r => {
+            const emp = empMap.get(r.employeeId);
+            const row = document.createElement('div');
+            row.className = 'whos-in-row';
+            const av = document.createElement('div');
+            av.className = 'emp-avatar';
+            if (emp && emp.photo) { const img = document.createElement('img'); img.src = emp.photo; av.appendChild(img); }
+            else av.textContent = (r.employeeName || '?').charAt(0).toUpperCase();
+            const info = document.createElement('div'); info.className = 'emp-info';
+            const n = document.createElement('div'); n.className = 'emp-name'; n.textContent = r.employeeName;
+            info.appendChild(n);
+            const time = document.createElement('div'); time.className = 'whos-in-time';
+            time.textContent = '🟢 ' + new Date(r.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            row.append(av, info, time);
+            el.whosInList.appendChild(row);
+        });
+
+        // 近 7 天工时柱状图
+        const now = Date.now();
+        const days = [];
+        for (let i = 6; i >= 0; i--) {
+            const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - i);
+            const start = d.getTime(); const end = start + 86400000;
+            const hours = workedMsInRange(recs, start, end, end > now ? now : end) / 3600000;
+            days.push({ label: d.toLocaleDateString([], { weekday: 'short' }), hours });
+        }
+        const maxH = Math.max(1, ...days.map(d => d.hours));
+        el.weeklyChart.innerHTML = '';
+        days.forEach(d => {
+            const col = document.createElement('div'); col.className = 'bar-col';
+            const val = document.createElement('div'); val.className = 'bar-val'; val.textContent = d.hours ? d.hours.toFixed(1) : '';
+            const bar = document.createElement('div'); bar.className = 'bar';
+            bar.style.height = `${Math.round((d.hours / maxH) * 100)}%`;
+            const day = document.createElement('div'); day.className = 'bar-day'; day.textContent = d.label;
+            col.append(val, bar, day);
+            el.weeklyChart.appendChild(col);
+        });
     }
 
     // ============================================================

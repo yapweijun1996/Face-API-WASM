@@ -14,8 +14,11 @@
 const I18N = (() => {
     const DICT = {
         en: {
-            tab_clock: 'Clock', tab_employees: 'Staff', tab_records: 'Records',
+            tab_clock: 'Clock', tab_dashboard: 'Dashboard', tab_employees: 'Staff', tab_records: 'Records',
             emp_count: '{n} staff',
+            dash_in_now: 'On duty', dash_late_today: 'Late today', dash_total_staff: 'Total staff',
+            dash_whos_in: '🟢 Currently on duty', dash_nobody_in: 'Nobody on duty right now.',
+            dash_weekly_hours: '📈 Hours — last 7 days',
 
             boot_loading: 'Loading…',
             boot_backend: 'Starting WASM backend…',
@@ -79,8 +82,11 @@ const I18N = (() => {
             dash: '—'
         },
         zh: {
-            tab_clock: '打卡', tab_employees: '员工', tab_records: '记录',
+            tab_clock: '打卡', tab_dashboard: '看板', tab_employees: '员工', tab_records: '记录',
             emp_count: '{n} 名员工',
+            dash_in_now: '在岗', dash_late_today: '今日迟到', dash_total_staff: '员工总数',
+            dash_whos_in: '🟢 当前在岗', dash_nobody_in: '当前无人在岗。',
+            dash_weekly_hours: '📈 近 7 天工时',
 
             boot_loading: '加载中…',
             boot_backend: '启动 WASM 后端…',

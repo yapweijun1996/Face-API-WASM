@@ -111,6 +111,21 @@
     .btn.ghost { background: transparent; color: var(--text); border: 1px solid var(--line); }
     .btn.danger { background: transparent; color: var(--out); border: 1px solid var(--out); }
 
+    /* ---------- 看板 ---------- */
+    .stat-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 16px; }
+    .stat { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 18px 12px; text-align: center; }
+    .stat-num { font-size: 32px; font-weight: 800; color: var(--accent); }
+    .stat-num.warn { color: var(--out); }
+    .stat-label { font-size: 12px; color: var(--muted); margin-top: 4px; }
+    .chart { display: flex; align-items: flex-end; gap: 8px; height: 160px; padding-top: 8px; }
+    .chart .bar-col { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 6px; height: 100%; justify-content: flex-end; }
+    .chart .bar { width: 70%; max-width: 36px; background: linear-gradient(180deg, var(--accent), #0891b2); border-radius: 6px 6px 0 0; min-height: 2px; transition: height .3s; }
+    .chart .bar-val { font-size: 10px; color: var(--muted); }
+    .chart .bar-day { font-size: 11px; color: var(--muted); }
+    .whos-in-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+    .whos-in-row:last-child { border-bottom: none; }
+    .whos-in-time { margin-left: auto; font-size: 13px; color: var(--in); font-weight: 600; }
+
     .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 16px; margin-bottom: 16px; }
     .card h2 { margin: 0 0 12px; font-size: 15px; }
 
@@ -226,6 +241,7 @@
     <h1>Face TMS</h1>
     <div class="tabs">
         <button data-tab="clock" class="active" data-i18n="tab_clock">打卡</button>
+        <button data-tab="dashboard" data-i18n="tab_dashboard">看板</button>
         <button data-tab="employees" data-i18n="tab_employees">员工</button>
         <button data-tab="records" data-i18n="tab_records">记录</button>
     </div>
@@ -245,6 +261,24 @@
                 <div class="clock-hint" id="clockHint" data-i18n="clock_face_camera">请正对镜头…</div>
                 <div class="clock-card" id="clockCard"></div>
             </div>
+        </div>
+    </section>
+
+    <!-- ===== 看板 ===== -->
+    <section class="panel" id="panel-dashboard">
+        <div class="stat-row">
+            <div class="stat"><div class="stat-num" id="statInNow">0</div><div class="stat-label" data-i18n="dash_in_now">在岗</div></div>
+            <div class="stat"><div class="stat-num warn" id="statLate">0</div><div class="stat-label" data-i18n="dash_late_today">今日迟到</div></div>
+            <div class="stat"><div class="stat-num" id="statStaff">0</div><div class="stat-label" data-i18n="dash_total_staff">员工总数</div></div>
+        </div>
+        <div class="card">
+            <h2 data-i18n="dash_whos_in">🟢 当前在岗</h2>
+            <div id="whosInList"></div>
+            <div class="empty" id="whosInEmpty" data-i18n="dash_nobody_in">当前无人在岗。</div>
+        </div>
+        <div class="card">
+            <h2 data-i18n="dash_weekly_hours">📈 近 7 天工时</h2>
+            <div id="weeklyChart" class="chart"></div>
         </div>
     </section>
 
@@ -317,6 +351,7 @@
 
 <nav>
     <button data-tab="clock" class="active"><span class="ico">🕐</span><span data-i18n="tab_clock">打卡</span></button>
+    <button data-tab="dashboard"><span class="ico">📈</span><span data-i18n="tab_dashboard">看板</span></button>
     <button data-tab="employees"><span class="ico">👥</span><span data-i18n="tab_employees">员工</span></button>
     <button data-tab="records"><span class="ico">📊</span><span data-i18n="tab_records">记录</span></button>
 </nav>
