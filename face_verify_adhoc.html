@@ -543,11 +543,24 @@
             const div = document.createElement('div');
             div.className = `image-item ${success ? 'success' : 'error'}`;
             div.dataset.id = id;
-            div.innerHTML = `
-                <img src="${thumbnail}" alt="${name}">
-                ${success ? '' : '<div class="overlay">❌</div>'}
-                <div class="name">${name}</div>
-            `;
+
+            const img = document.createElement('img');
+            img.src = thumbnail;          // assigning to .src never executes markup
+            img.alt = String(name ?? '');
+            div.appendChild(img);
+
+            if (!success) {
+                const overlay = document.createElement('div');
+                overlay.className = 'overlay';
+                overlay.textContent = '❌';
+                div.appendChild(overlay);
+            }
+
+            const nameDiv = document.createElement('div');
+            nameDiv.className = 'name';
+            nameDiv.textContent = String(name ?? '');   // textContent never executes markup
+            div.appendChild(nameDiv);
+
             imageGrid.appendChild(div);
         }
 

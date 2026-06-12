@@ -562,26 +562,35 @@
             status.className = type;
         }
 
+        function escapeHtml(s) {
+            return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+        }
+
         function updateUserList(users) {
             userCount.textContent = users.length;
 
             if (users.length === 0) {
                 userList.className = 'user-list empty';
-                userList.innerHTML = 'No users loaded. Select a data source above.';
+                userList.textContent = 'No users loaded. Select a data source above.';
                 return;
             }
 
             userList.className = 'user-list';
-            userList.innerHTML = users.map(u => `
-                <div class="user-item" data-user-id="${u.id}">
-                    <div class="avatar">${(u.name || u.id).charAt(0).toUpperCase()}</div>
+            userList.innerHTML = users.map(u => {
+                const id = escapeHtml(u.id);
+                const name = escapeHtml(u.name || 'Unknown');
+                const initial = escapeHtml((u.name || u.id || '?').charAt(0).toUpperCase());
+                return `
+                <div class="user-item" data-user-id="${id}">
+                    <div class="avatar">${initial}</div>
                     <div class="info">
-                        <div class="name">${u.name || 'Unknown'}</div>
-                        <div class="id">${u.id}</div>
+                        <div class="name">${name}</div>
+                        <div class="id">${id}</div>
                     </div>
                     <div class="status"></div>
                 </div>
-            `).join('');
+            `;
+            }).join('');
         }
 
         function markUserVerified(userId) {

@@ -870,25 +870,41 @@
             }
 
             userListEl.innerHTML = users.map(user => {
-                const initial = (user.name || user.userId || '?').charAt(0).toUpperCase();
+                const id = escapeHtml(user.userId);
+                const name = escapeHtml(user.name || user.userId);
+                const initial = escapeHtml((user.name || user.userId || '?').charAt(0).toUpperCase());
                 const descriptorCount = user.descriptors ? user.descriptors.length : 0;
                 const date = user.registeredAt ? new Date(user.registeredAt).toLocaleDateString() : 'Unknown';
 
                 return `
-                    <div class="user-item" data-user-id="${user.userId}">
+                    <div class="user-item" data-user-id="${id}">
                         <div class="user-avatar">${initial}</div>
                         <div class="user-info">
-                            <div class="user-name">${user.name || user.userId}</div>
-                            <div class="user-meta">ID: ${user.userId} • ${descriptorCount} descriptors • ${date}</div>
+                            <div class="user-name">${name}</div>
+                            <div class="user-meta">ID: ${id} • ${descriptorCount} descriptors • ${escapeHtml(date)}</div>
                         </div>
                         <div class="user-actions">
-                            <button class="btn-secondary btn-sm" onclick="exportUser('${user.userId}')">📥</button>
-                            <button class="btn-danger btn-sm" onclick="confirmDeleteUser('${user.userId}')">🗑️</button>
+                            <button class="btn-secondary btn-sm" data-action="export" data-user-id="${id}">📥</button>
+                            <button class="btn-danger btn-sm" data-action="delete" data-user-id="${id}">🗑️</button>
                         </div>
                     </div>
                 `;
             }).join('');
         }
+
+        function escapeHtml(s) {
+            return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+        }
+
+        // Event delegation — avoids inline onclick string injection entirely.
+        // The userId comes from the DOM dataset (already a plain string), never re-parsed as JS.
+        userListEl.addEventListener('click', (e) => {
+            const btn = e.target.closest('button[data-action]');
+            if (!btn) return;
+            const userId = btn.dataset.userId;
+            if (btn.dataset.action === 'export') exportUser(userId);
+            else if (btn.dataset.action === 'delete') confirmDeleteUser(userId);
+        });
 
         function updateStats(users) {
             const userCount = users.length;
