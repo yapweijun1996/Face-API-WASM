@@ -133,9 +133,10 @@ const I18N = (() => {
     const onChange = [];
 
     function detect() {
+        // 默认强制英文；只有用户用右上角按钮手动切换过，才记住其选择。
         const saved = localStorage.getItem(LANG_KEY);
         if (saved === 'en' || saved === 'zh') return saved;
-        return (navigator.language || 'en').toLowerCase().startsWith('zh') ? 'zh' : 'en';
+        return 'en';
     }
 
     let lang = detect();
