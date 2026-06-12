@@ -19,8 +19,17 @@
     const MODEL_URL = BASE + 'models';
     const WASM_PATH = BASE + 'js/lib/';
 
+    const SAFE_MATCH_THRESHOLD = 0.32;
+    const MIN_CLOCK_CONFIDENCE = 80;
+    const LIVENESS_CHALLENGE_TIMEOUT_MS = 6000;
+    const BLINK_EAR_CLOSED = 0.20;
+    const BLINK_EAR_OPEN = 0.24;
+
     // ---------- 运行状态 ----------
     let settings = tmsDB.getSettings();
+    if (settings.matchThreshold > SAFE_MATCH_THRESHOLD) {
+        settings = tmsDB.saveSettings({ matchThreshold: SAFE_MATCH_THRESHOLD });
+    }
     let matcher = null;
     let empPhotos = new Map();        // employeeId -> 脸部缩略图 dataURL，供打卡卡片显示
     let regManager = null;
@@ -56,13 +65,14 @@
 
     const detectorOptions = () => new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.5 });
 
-    // MiniFASNet-V1SE ONNX anti-spoofing: input 1x3x80x80 BGR float32 [0,1].
-    // Upstream Silent-Face-Anti-Spoofing treats argmax class 1 as Real Face.
-    const LIVENESS_MODEL_NAME = 'MiniFASNetV1SE';
-    const LIVENESS_MODEL_URL = './models/MiniFASNetV1SE.onnx';
-    const LIVENESS_REAL_CLASS_INDEX = 1;
+    // Facenox MiniFASNetV2-SE ONNX anti-spoofing: input 1x3x128x128 RGB float32 [0,1].
+    // Output logits are [real, spoof]; pass when sigmoid(real - spoof) >= threshold.
+    const LIVENESS_MODEL_NAME = 'FacenoxMiniFASNetV2SE';
+    const LIVENESS_MODEL_URL = './models/facenox_minifasv2se_quantized.onnx';
+    const LIVENESS_INPUT_SIZE = 128;
+    const LIVENESS_REAL_CLASS_INDEX = 0;
     const LIVENESS_LIVE_THRESHOLD = 0.50;
-    const LIVENESS_CROP_SCALE = 4.0;
+    const LIVENESS_CROP_SCALE = 1.5;
     const antiSpoof = {
         session: null,
         loading: null,
@@ -192,39 +202,26 @@
         return exps.map(v => v / sum);
     }
 
-    function showLivenessCropDebug(sourceCanvas, meta) {
-        let panel = document.getElementById('livenessCropDebug');
-        if (!panel) {
-            panel = document.createElement('div');
-            panel.id = 'livenessCropDebug';
-            panel.style.cssText = [
-                'position:fixed',
-                'right:16px',
-                'bottom:16px',
-                'z-index:9999',
-                'padding:10px',
-                'border:1px solid rgba(250,204,21,.8)',
-                'border-radius:12px',
-                'background:rgba(15,23,42,.92)',
-                'color:#e5e7eb',
-                'font:12px/1.35 ui-monospace,SFMono-Regular,Menlo,monospace',
-                'box-shadow:0 16px 40px rgba(0,0,0,.35)',
-                'pointer-events:none'
-            ].join(';');
-            panel.innerHTML = `
-                <div style="margin-bottom:6px;color:#facc15;font-weight:700">ONNX liveness crop</div>
-                <canvas width="160" height="160" style="display:block;width:160px;height:160px;image-rendering:pixelated;border-radius:8px;background:#020617"></canvas>
-                <div data-meta style="margin-top:6px;max-width:180px;color:#cbd5e1"></div>
-            `;
-            document.body.appendChild(panel);
+    function pointDistance(a, b) {
+        return Math.hypot(a.x - b.x, a.y - b.y);
+    }
+
+    function eyeAspectRatio(eye) {
+        if (!eye || eye.length < 6) return 1;
+        return (pointDistance(eye[1], eye[5]) + pointDistance(eye[2], eye[4])) / (2 * pointDistance(eye[0], eye[3]) || 1);
+    }
+
+    function updateBlinkChallenge(data, landmarks) {
+        if (!landmarks || data.blinkPassed) return;
+        const left = landmarks.getLeftEye();
+        const right = landmarks.getRightEye();
+        const ear = (eyeAspectRatio(left) + eyeAspectRatio(right)) / 2;
+        data.eyeAspectRatio = ear;
+        if (ear < BLINK_EAR_CLOSED) data.eyeClosed = true;
+        if (data.eyeClosed && ear > BLINK_EAR_OPEN) {
+            data.eyeClosed = false;
+            data.blinkPassed = true;
         }
-        const debugCanvas = panel.querySelector('canvas');
-        const debugCtx = debugCanvas.getContext('2d');
-        debugCtx.imageSmoothingEnabled = false;
-        debugCtx.clearRect(0, 0, debugCanvas.width, debugCanvas.height);
-        debugCtx.drawImage(sourceCanvas, 0, 0, debugCanvas.width, debugCanvas.height);
-        panel.querySelector('[data-meta]').textContent =
-            `src ${Math.round(meta.sx)},${Math.round(meta.sy)} ${Math.round(meta.sw)}x${Math.round(meta.sh)}`;
     }
 
     function makeLivenessTensor(video, box) {
@@ -237,46 +234,37 @@
         const sy = Math.max(0, Math.min(video.videoHeight - size, cy - size / 2));
 
         const canvas = document.createElement('canvas');
-        canvas.width = 80;
-        canvas.height = 80;
+        canvas.width = LIVENESS_INPUT_SIZE;
+        canvas.height = LIVENESS_INPUT_SIZE;
         const ctx = canvas.getContext('2d');
-        ctx.drawImage(video, sx, sy, size, size, 0, 0, 80, 80);
-        showLivenessCropDebug(canvas, { sx, sy, sw: size, sh: size });
+        ctx.drawImage(video, sx, sy, size, size, 0, 0, LIVENESS_INPUT_SIZE, LIVENESS_INPUT_SIZE);
 
-        const rgba = ctx.getImageData(0, 0, 80, 80).data;
-        const input = new Float32Array(3 * 80 * 80);
-        for (let i = 0; i < 80 * 80; i++) {
+        const rgba = ctx.getImageData(0, 0, LIVENESS_INPUT_SIZE, LIVENESS_INPUT_SIZE).data;
+        const pixels = LIVENESS_INPUT_SIZE * LIVENESS_INPUT_SIZE;
+        const input = new Float32Array(3 * pixels);
+        for (let i = 0; i < pixels; i++) {
             const p = i * 4;
-            input[i] = rgba[p + 2] / 255;
-            input[80 * 80 + i] = rgba[p + 1] / 255;
-            input[2 * 80 * 80 + i] = rgba[p] / 255;
+            input[i] = rgba[p] / 255;
+            input[pixels + i] = rgba[p + 1] / 255;
+            input[2 * pixels + i] = rgba[p + 2] / 255;
         }
-        return new ort.Tensor('float32', input, [1, 3, 80, 80]);
+        return new ort.Tensor('float32', input, [1, 3, LIVENESS_INPUT_SIZE, LIVENESS_INPUT_SIZE]);
     }
 
     async function predictLiveness(video, box) {
         const session = await initAntiSpoof();
         const tensor = makeLivenessTensor(video, box);
         const output = await session.run({ [antiSpoof.inputName]: tensor });
-        const raw = Array.from(output[antiSpoof.outputName].data).slice(0, 3);
-        const prob = softmax(raw);
-        const label = prob.indexOf(Math.max(...prob));
-        const realScore = prob[LIVENESS_REAL_CLASS_INDEX];
-        const passed = label === LIVENESS_REAL_CLASS_INDEX && realScore >= LIVENESS_LIVE_THRESHOLD;
-        console.log('Liveness Debug:', {
-            model: LIVENESS_MODEL_NAME,
-            cropScale: LIVENESS_CROP_SCALE,
-            raw: raw.map(v => Number(v.toFixed(4))),
-            prob: prob.map(v => Number(v.toFixed(4))),
-            label,
-            realScore: Number(realScore.toFixed(4)),
-            threshold: LIVENESS_LIVE_THRESHOLD,
-            passed
-        });
+        const raw = Array.from(output[antiSpoof.outputName].data).slice(0, 2);
+        const logitDiff = raw[0] - raw[1];
+        const realScore = 1 / (1 + Math.exp(-logitDiff));
+        const prob = [realScore, 1 - realScore];
+        const label = realScore >= 0.5 ? 0 : 1;
+        const passed = realScore >= LIVENESS_LIVE_THRESHOLD;
         return {
             live: realScore,
-            print: prob[1],
-            replay: prob[2],
+            print: 0,
+            replay: prob[1],
             label,
             passed
         };
@@ -310,8 +298,10 @@
         });
         activeVideo = videoEl;
         videoEl.srcObject = stream;
-        await new Promise((resolve) => {
-            videoEl.onloadedmetadata = () => { videoEl.play(); resolve(); };
+        await new Promise((resolve, reject) => {
+            const tid = setTimeout(() => reject(new Error('camera metadata timeout')), 5000);
+            videoEl.onerror = (e) => { clearTimeout(tid); reject(e); };
+            videoEl.onloadedmetadata = () => { clearTimeout(tid); videoEl.play(); resolve(); };
         });
     }
 
@@ -470,6 +460,7 @@
         let prog = 0, hint = '';
         if (hs.phase === 'done') { prog = 1; }
         else if (hs.phase === 'checking') { prog = 0.35; hint = I18N.t('liveness_checking'); }
+        else if (hs.phase === 'blink') { prog = 0.65; hint = I18N.t('liveness_blink'); }
         else if (hs.phase === 'spoof') { prog = 1; hint = I18N.t('liveness_failed'); }
         else {
             prog = Math.min(1, (performance.now() - hs.startTs) / HOLD_MS);
@@ -514,8 +505,16 @@
             const box = det.detection.box;
             const result = matcher ? matcher.findBestMatch(det.descriptor) : { status: 'unknown' };
 
-            if (result.status !== 'matched') {
+            if (result.status !== 'matched' || result.confidence < MIN_CLOCK_CONFIDENCE) {
                 track.data.empId = null;   // 这张脸暂不认识，清掉旧绑定
+                if (result.status === 'matched') {
+                    console.warn('TMS rejected weak face match:', {
+                        employeeId: result.user && result.user.id,
+                        confidence: Number(result.confidence.toFixed(1)),
+                        minConfidence: MIN_CLOCK_CONFIDENCE,
+                        distance: Number(result.distance.toFixed(4))
+                    });
+                }
                 drawList.push({ box, match: null, hold: null });
                 continue;
             }
@@ -526,7 +525,12 @@
             // track 改绑了不同员工（人换了 / 误识别跳变）→ 重置该 track 的 hold
             if (d.empId !== emp.id) {
                 d.empId = emp.id; d.name = emp.name;
-                d.action = null; d.startTs = now; d.livePassed = !settings.liveness; d.liveScore = 0; d.phase = 'hold';
+                d.action = null; d.startTs = now;
+                d.antiSpoofPassed = !settings.liveness;
+                d.blinkPassed = !settings.liveness;
+                d.livePassed = !settings.liveness;
+                d.livenessStartTs = now;
+                d.liveScore = 0; d.phase = 'hold';
             }
             d.confidence = result.confidence;
 
@@ -554,17 +558,37 @@
             }
 
             if (settings.liveness) {
+                updateBlinkChallenge(d, det.landmarks);
                 if (!d.livePassed) {
-                    d.phase = 'checking';
-                    try {
-                        const live = await predictLiveness(activeVideo, box);
-                        d.liveScore = live.live;
-                        d.livePassed = live.passed;
-                        d.phase = live.passed ? 'hold' : 'spoof';
-                        d.startTs = now;
-                    } catch (e) {
+                    if (!d.livenessStartTs) d.livenessStartTs = now;
+                    if (now - d.livenessStartTs > LIVENESS_CHALLENGE_TIMEOUT_MS) {
                         d.phase = 'spoof';
-                        toast(I18N.t('liveness_model_fail', { msg: e.message }), 'err');
+                        d.antiSpoofPassed = false;
+                        d.blinkPassed = false;
+                        d.livenessStartTs = now;
+                        continue;
+                    }
+                    if (!d.antiSpoofPassed) {
+                        d.phase = 'checking';
+                        try {
+                            const live = await predictLiveness(activeVideo, box);
+                            d.liveScore = live.live;
+                            d.antiSpoofPassed = live.passed;
+                            d.phase = live.passed ? 'checking' : 'spoof';
+                            d.startTs = now;
+                        } catch (e) {
+                            d.phase = 'spoof';
+                            toast(I18N.t('liveness_model_fail', { msg: e.message }), 'err');
+                        }
+                    }
+                    if (d.antiSpoofPassed && !d.blinkPassed) {
+                        d.phase = 'blink';
+                        d.startTs = now;
+                    }
+                    d.livePassed = d.antiSpoofPassed && d.blinkPassed;
+                    if (d.livePassed) {
+                        d.phase = 'hold';
+                        d.livenessStartTs = null;
                     }
                     if (!d.livePassed) continue;
                 }
@@ -606,7 +630,7 @@
         if (target) {
             lastPrimaryId = target.emp.id;
             const d = target.track.data;
-            const phase = d.phase === 'done' ? 'done' : (d.phase === 'checking' || d.phase === 'spoof' ? d.phase : 'holding');
+            const phase = d.phase === 'done' ? 'done' : (d.phase === 'checking' || d.phase === 'blink' || d.phase === 'spoof' ? d.phase : 'holding');
             renderClockStatus(target.emp, target.confidence, phase, d);
         } else if (dets.length) {
             lastPrimaryId = null;
@@ -810,7 +834,13 @@
 
         appMode = 'enroll';
         regManager.start(id, name);
-        await startCamera(el.enrollVideo);
+        try {
+            await startCamera(el.enrollVideo);
+        } catch (e) {
+            closeEnroll();
+            toast(I18N.t('camera_error', { msg: e.message }), 'err');
+            return;
+        }
         el.enrollOverlay.width = el.enrollVideo.videoWidth;
         el.enrollOverlay.height = el.enrollVideo.videoHeight;
         startLoop(el.enrollOverlay);
@@ -1091,7 +1121,8 @@
         });
         if (el.thresholdInput) {
             el.thresholdInput.addEventListener('input', () => {
-                const v = parseFloat(el.thresholdInput.value);
+                const v = Math.min(SAFE_MATCH_THRESHOLD, parseFloat(el.thresholdInput.value));
+                el.thresholdInput.value = v;
                 el.thresholdLabel.textContent = I18N.t('threshold_label', { v: v.toFixed(2) });
                 settings = tmsDB.saveSettings({ matchThreshold: v });
                 if (matcher) matcher.config.matchThreshold = v;
