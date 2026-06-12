@@ -43,7 +43,10 @@
     }
     header h1 { font-size: 18px; margin: 0; font-weight: 700; }
     header .logo { font-size: 22px; }
-    header .pill { margin-left: auto; font-size: 12px; color: var(--muted); border: 1px solid var(--line); padding: 4px 10px; border-radius: 999px; }
+    header .pill { font-size: 12px; color: var(--muted); border: 1px solid var(--line); padding: 4px 10px; border-radius: 999px; white-space: nowrap; }
+    header .lang-btn { margin-left: auto; background: transparent; border: 1px solid var(--line); color: var(--text); font-size: 13px; font-weight: 600; padding: 5px 12px; border-radius: 999px; cursor: pointer; }
+    header .lang-btn + .pill { margin-left: 8px; }
+    header .lang-btn:active { transform: scale(.96); }
 
     main { flex: 1; width: 100%; max-width: 920px; margin: 0 auto; padding: 16px; }
 
@@ -200,22 +203,23 @@
 <div class="boot" id="bootOverlay">
     <div class="ring"></div>
     <div class="b-title">Face TMS</div>
-    <div class="b-status" id="bootStatus">加载中…</div>
+    <div class="b-status" id="bootStatus" data-i18n="boot_loading">加载中…</div>
 </div>
 
 <div class="update-banner" id="updateBanner">
-    有新版本 <button id="reloadBtn">立即更新</button>
+    <span data-i18n="update_available">有新版本</span> <button id="reloadBtn" data-i18n="update_now">立即更新</button>
 </div>
 
 <header>
     <span class="logo">🕐</span>
     <h1>Face TMS</h1>
     <div class="tabs">
-        <button data-tab="clock" class="active">打卡</button>
-        <button data-tab="employees">员工</button>
-        <button data-tab="records">记录</button>
+        <button data-tab="clock" class="active" data-i18n="tab_clock">打卡</button>
+        <button data-tab="employees" data-i18n="tab_employees">员工</button>
+        <button data-tab="records" data-i18n="tab_records">记录</button>
     </div>
-    <span class="pill"><span id="clockEmpCount">0</span> 名员工</span>
+    <button class="lang-btn" id="langBtn">EN</button>
+    <span class="pill" id="empCountPill">0</span>
 </header>
 
 <main>
@@ -227,7 +231,7 @@
                 <canvas id="clockOverlay"></canvas>
             </div>
             <div>
-                <div class="clock-hint" id="clockHint">请正对镜头…</div>
+                <div class="clock-hint" id="clockHint" data-i18n="clock_face_camera">请正对镜头…</div>
                 <div class="clock-card" id="clockCard"></div>
             </div>
         </div>
@@ -236,47 +240,47 @@
     <!-- ===== 员工 ===== -->
     <section class="panel" id="panel-employees">
         <div class="card">
-            <h2>➕ 注册新员工</h2>
+            <h2 data-i18n="emp_register_title">➕ 注册新员工</h2>
             <div class="field">
-                <label>姓名</label>
-                <input id="empName" type="text" placeholder="如：张三" autocomplete="off" />
+                <label data-i18n="label_name">姓名</label>
+                <input id="empName" type="text" data-i18n-ph="ph_name" placeholder="如：张三" autocomplete="off" />
             </div>
             <div class="field">
-                <label>部门（选填）</label>
-                <input id="empDept" type="text" placeholder="如：研发部" autocomplete="off" />
+                <label data-i18n="label_dept">部门（选填）</label>
+                <input id="empDept" type="text" data-i18n-ph="ph_dept" placeholder="如：研发部" autocomplete="off" />
             </div>
-            <button class="btn" id="enrollBtn">📸 采集人脸并注册</button>
+            <button class="btn" id="enrollBtn" data-i18n="enroll_btn">📸 采集人脸并注册</button>
         </div>
         <div class="card">
-            <h2>👥 已注册员工</h2>
+            <h2 data-i18n="emp_list_title">👥 已注册员工</h2>
             <div id="empList"></div>
-            <div class="empty" id="empEmpty">还没有员工，先注册一个吧。</div>
+            <div class="empty" id="empEmpty" data-i18n="emp_empty">还没有员工，先注册一个吧。</div>
         </div>
     </section>
 
     <!-- ===== 记录 ===== -->
     <section class="panel" id="panel-records">
         <div class="card">
-            <h2>📊 考勤记录</h2>
-            <div class="summary" id="recordsSummary">今日暂无完整工时记录</div>
+            <h2 data-i18n="records_title">📊 考勤记录</h2>
+            <div class="summary" id="recordsSummary" data-i18n="no_hours">今日暂无完整工时记录</div>
             <div class="table-wrap">
                 <table>
                     <thead>
-                        <tr><th>员工</th><th>类型</th><th>日期</th><th>时间</th></tr>
+                        <tr><th data-i18n="th_emp">员工</th><th data-i18n="th_type">类型</th><th data-i18n="th_date">日期</th><th data-i18n="th_time">时间</th></tr>
                     </thead>
                     <tbody id="recordsBody"></tbody>
                 </table>
             </div>
-            <div class="empty" id="recordsEmpty">暂无打卡记录。</div>
+            <div class="empty" id="recordsEmpty" data-i18n="records_empty">暂无打卡记录。</div>
             <div class="row-actions">
-                <button class="btn ghost" id="exportCsvBtn">⬇ 导出 CSV</button>
-                <button class="btn danger" id="clearRecordsBtn">清空记录</button>
+                <button class="btn ghost" id="exportCsvBtn" data-i18n="export_csv">⬇ 导出 CSV</button>
+                <button class="btn danger" id="clearRecordsBtn" data-i18n="clear_records">清空记录</button>
             </div>
         </div>
         <div class="card">
-            <h2>⚙️ 识别灵敏度</h2>
+            <h2 data-i18n="sensitivity_title">⚙️ 识别灵敏度</h2>
             <div class="field">
-                <label>匹配阈值 <span id="thresholdVal">0.50</span>（越小越严格）</label>
+                <label id="thresholdLabel">匹配阈值 <span id="thresholdVal">0.50</span></label>
                 <input id="thresholdInput" type="range" min="0.35" max="0.7" step="0.01" />
             </div>
         </div>
@@ -284,9 +288,9 @@
 </main>
 
 <nav>
-    <button data-tab="clock" class="active"><span class="ico">🕐</span>打卡</button>
-    <button data-tab="employees"><span class="ico">👥</span>员工</button>
-    <button data-tab="records"><span class="ico">📊</span>记录</button>
+    <button data-tab="clock" class="active"><span class="ico">🕐</span><span data-i18n="tab_clock">打卡</span></button>
+    <button data-tab="employees"><span class="ico">👥</span><span data-i18n="tab_employees">员工</span></button>
+    <button data-tab="records"><span class="ico">📊</span><span data-i18n="tab_records">记录</span></button>
 </nav>
 
 <!-- 注册弹层 -->
@@ -300,7 +304,7 @@
         <div class="bar"><div id="enrollBar"></div></div>
         <div class="enroll-text" id="enrollText">0 / 0</div>
         <div class="thumbs" id="enrollThumbs"></div>
-        <button class="btn ghost" id="enrollCancel">取消</button>
+        <button class="btn ghost" id="enrollCancel" data-i18n="cancel">取消</button>
     </div>
 </div>
 
@@ -314,6 +318,7 @@
 <script src="../../js/core/FaceMatcher.js"></script>
 
 <!-- TMS 自己的存储与逻辑 -->
+<script src="./js/tms-i18n.js"></script>
 <script src="./js/tms-db.js"></script>
 <script src="./js/tms-app.js"></script>
 </body>

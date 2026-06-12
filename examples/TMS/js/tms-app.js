@@ -41,12 +41,12 @@
     function cacheDom() {
         [
             'bootOverlay', 'bootStatus', 'toast', 'updateBanner', 'reloadBtn',
-            'clockVideo', 'clockOverlay', 'clockCard', 'clockHint', 'clockEmpCount',
+            'clockVideo', 'clockOverlay', 'clockCard', 'clockHint', 'empCountPill', 'langBtn',
             'empList', 'empName', 'empDept', 'enrollBtn', 'empEmpty',
             'enrollModal', 'enrollVideo', 'enrollOverlay', 'enrollBar', 'enrollText',
             'enrollThumbs', 'enrollCancel', 'enrollTitle',
             'recordsBody', 'recordsSummary', 'recordsEmpty', 'exportCsvBtn', 'clearRecordsBtn',
-            'thresholdInput', 'thresholdVal'
+            'thresholdInput', 'thresholdVal', 'thresholdLabel'
         ].forEach(id => { el[id] = $(id); });
     }
 
@@ -55,11 +55,14 @@
     // ============================================================
     async function boot() {
         cacheDom();
+        I18N.apply();
+        el.langBtn.textContent = I18N.other;
+        I18N.onChange.push(onLangChange);
         wireUi();
         registerServiceWorker();
 
         try {
-            setBoot('启动 WASM 后端…');
+            setBoot(I18N.t('boot_backend'));
             if (typeof tf !== 'undefined' && tf.wasm && tf.wasm.setWasmPaths) {
                 tf.wasm.setWasmPaths(WASM_PATH);
                 await tf.setBackend('wasm');
@@ -69,17 +72,17 @@
                 await faceapi.tf.ready();
             }
 
-            setBoot('加载人脸模型…');
+            setBoot(I18N.t('boot_models'));
             await Promise.all([
                 faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
                 faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
                 faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL)
             ]);
 
-            setBoot('预热…');
+            setBoot(I18N.t('boot_warmup'));
             await warmup();
 
-            setBoot('加载员工数据…');
+            setBoot(I18N.t('boot_employees'));
             await tmsDB.init();
             await reloadMatcher();
 
@@ -102,8 +105,20 @@
             switchTab('clock');
         } catch (err) {
             console.error(err);
-            setBoot('初始化失败：' + err.message + '（请用 HTTPS 或 localhost 打开，并允许摄像头）');
+            setBoot(I18N.t('boot_fail', { msg: err.message }));
         }
+    }
+
+    /** 语言切换后重渲染动态内容 */
+    function onLangChange() {
+        el.langBtn.textContent = I18N.other;
+        lastClockKey = null;                 // 强制 clock 卡片下次重渲染
+        applySettingsToUi();
+        renderEmployees();
+        renderRecords();
+        const employees = matcher ? matcher.getUserCount() : 0;
+        el.empCountPill.textContent = I18N.t('emp_count', { n: employees });
+        if (appMode === 'clock' && (!matcher || matcher.getUserCount() === 0)) showClockIdle();
     }
 
     async function warmup() {
@@ -121,7 +136,7 @@
             descriptors: e.descriptors,
             meanDescriptor: e.meanDescriptor
         })));
-        if (el.clockEmpCount) el.clockEmpCount.textContent = employees.length;
+        el.empCountPill.textContent = I18N.t('emp_count', { n: employees.length });
         return employees;
     }
 
@@ -227,11 +242,11 @@
             el.clockCard.innerHTML = '';
             el.clockCard.append(
                 buildAvatar(initial, 'ok'),
-                buildText(emp.name, `已记录 · 置信度 ${confidence.toFixed(0)}%`),
+                buildText(emp.name, I18N.t('clock_recorded', { c: confidence.toFixed(0) })),
             );
             const badge = document.createElement('div');
             badge.className = 'clock-badge ok';
-            badge.textContent = '✓ 打卡完成';
+            badge.textContent = I18N.t('clock_done');
             el.clockCard.appendChild(badge);
             el.clockCard.className = 'clock-card show';
             el.clockHint.textContent = '';
@@ -241,11 +256,11 @@
         el.clockCard.innerHTML = '';
         el.clockCard.append(
             buildAvatar(initial, action === 'in' ? 'in' : 'out'),
-            buildText(emp.name, `置信度 ${confidence.toFixed(0)}%`)
+            buildText(emp.name, I18N.t('clock_confidence', { c: confidence.toFixed(0) }))
         );
         const btn = document.createElement('button');
         btn.className = 'clock-action ' + action;
-        btn.textContent = action === 'in' ? '🟢 上班打卡 Clock In' : '🔴 下班打卡 Clock Out';
+        btn.textContent = action === 'in' ? I18N.t('clock_in_btn') : I18N.t('clock_out_btn');
         btn.onclick = () => doClock(emp, action);
         el.clockCard.appendChild(btn);
         el.clockCard.className = 'clock-card show';
@@ -271,7 +286,7 @@
         await tmsDB.addAttendance({ employeeId: emp.id, employeeName: emp.name, type });
         cooldown.set(emp.id, Date.now());
         lastClockKey = null;
-        toast(`${emp.name} ${type === 'in' ? '上班' : '下班'}打卡成功`, 'ok');
+        toast(I18N.t(type === 'in' ? 'toast_clock_in' : 'toast_clock_out', { name: emp.name }), 'ok');
         renderClockCard(emp, 100, 'done');
         await renderRecords();
     }
@@ -281,13 +296,13 @@
         lastClockKey = '__idle__';
         el.clockCard.className = 'clock-card';
         el.clockHint.textContent = matcher && matcher.getUserCount() > 0
-            ? '请正对镜头…' : '还没有员工，请先到「员工」标签注册人脸。';
+            ? I18N.t('clock_face_camera') : I18N.t('clock_no_employees');
     }
     function showClockNoMatch() {
         if (lastClockKey === '__nomatch__') return;
         lastClockKey = '__nomatch__';
         el.clockCard.className = 'clock-card';
-        el.clockHint.textContent = '未识别到已注册员工';
+        el.clockHint.textContent = I18N.t('clock_no_match');
     }
 
     // ============================================================
@@ -333,17 +348,17 @@
             await reloadMatcher();
             await renderEmployees();
             closeEnroll();
-            toast(`员工「${data.name}」注册成功`, 'ok');
+            toast(I18N.t('enroll_success', { name: data.name }), 'ok');
         };
-        regManager.onError = (e) => { toast('注册失败：' + e.message, 'err'); closeEnroll(); };
+        regManager.onError = (e) => { toast(I18N.t('enroll_fail', { msg: e.message }), 'err'); closeEnroll(); };
     }
 
     async function openEnroll() {
         const name = el.empName.value.trim();
-        if (!name) { toast('请先填写姓名', 'err'); return; }
+        if (!name) { toast(I18N.t('need_name'), 'err'); return; }
         const id = 'emp_' + Date.now().toString(36);
 
-        el.enrollTitle.textContent = `注册：${name}`;
+        el.enrollTitle.textContent = I18N.t('enroll_title', { name });
         el.enrollThumbs.innerHTML = '';
         el.enrollBar.style.width = '0%';
         el.enrollText.textContent = `0 / ${settings.enrollCaptures}`;
@@ -382,19 +397,22 @@
             info.className = 'emp-info';
             const n = document.createElement('div'); n.className = 'emp-name'; n.textContent = emp.name;
             const m = document.createElement('div'); m.className = 'emp-meta';
-            m.textContent = `${emp.department || '—'} · ${emp.descriptors.length} 帧 · ${new Date(emp.enrolledAt).toLocaleDateString()}`;
+            m.textContent = I18N.t('emp_meta', {
+                dept: emp.department || I18N.t('dash'),
+                n: emp.descriptors.length,
+                date: new Date(emp.enrolledAt).toLocaleDateString()
+            });
             info.append(n, m);
 
             const del = document.createElement('button');
             del.className = 'emp-del';
             del.textContent = '🗑';
-            del.title = '删除';
             del.onclick = async () => {
-                if (!confirm(`删除员工「${emp.name}」？其考勤记录会保留。`)) return;
+                if (!confirm(I18N.t('emp_delete_confirm', { name: emp.name }))) return;
                 await tmsDB.deleteEmployee(emp.id);
                 await reloadMatcher();
                 await renderEmployees();
-                toast('已删除', 'ok');
+                toast(I18N.t('deleted'), 'ok');
             };
 
             row.append(av, info, del);
@@ -415,7 +433,7 @@
             const t = new Date(r.timestamp);
             const cells = [
                 r.employeeName,
-                r.type === 'in' ? '🟢 上班' : '🔴 下班',
+                r.type === 'in' ? I18N.t('type_in') : I18N.t('type_out'),
                 t.toLocaleDateString(),
                 t.toLocaleTimeString()
             ];
@@ -445,14 +463,14 @@
             });
         const parts = Object.values(byEmp).map(e => {
             const h = (e.ms / 3600000);
-            return `${e.name}: ${h.toFixed(1)}h${e.openIn ? ' (在岗)' : ''}`;
+            return I18N.t('hours_item', { name: e.name, h: h.toFixed(1) }) + (e.openIn ? I18N.t('on_duty') : '');
         });
-        return parts.length ? '今日工时 — ' + parts.join(' · ') : '今日暂无完整工时记录';
+        return parts.length ? I18N.t('hours_prefix') + parts.join(' · ') : I18N.t('no_hours');
     }
 
     async function exportCsv() {
         const recs = await tmsDB.getAllAttendance();
-        if (!recs.length) { toast('暂无记录', 'err'); return; }
+        if (!recs.length) { toast(I18N.t('no_records'), 'err'); return; }
         const rows = [['employeeId', 'employeeName', 'type', 'datetime']];
         recs.slice().reverse().forEach(r => {
             rows.push([r.employeeId, r.employeeName, r.type, new Date(r.timestamp).toISOString()]);
@@ -506,7 +524,7 @@
     function applySettingsToUi() {
         if (!el.thresholdInput) return;
         el.thresholdInput.value = settings.matchThreshold;
-        el.thresholdVal.textContent = settings.matchThreshold.toFixed(2);
+        el.thresholdLabel.textContent = I18N.t('threshold_label', { v: settings.matchThreshold.toFixed(2) });
     }
 
     // ============================================================
@@ -516,19 +534,20 @@
         document.querySelectorAll('[data-tab]').forEach(btn => {
             btn.addEventListener('click', () => switchTab(btn.dataset.tab));
         });
+        el.langBtn.addEventListener('click', () => I18N.toggle());
         el.enrollBtn.addEventListener('click', openEnroll);
         el.enrollCancel.addEventListener('click', closeEnroll);
         el.exportCsvBtn.addEventListener('click', exportCsv);
         el.clearRecordsBtn.addEventListener('click', async () => {
-            if (!confirm('清空所有考勤记录？此操作不可恢复。')) return;
+            if (!confirm(I18N.t('clear_confirm'))) return;
             await tmsDB.clearAttendance();
             await renderRecords();
-            toast('已清空考勤记录', 'ok');
+            toast(I18N.t('cleared'), 'ok');
         });
         if (el.thresholdInput) {
             el.thresholdInput.addEventListener('input', () => {
                 const v = parseFloat(el.thresholdInput.value);
-                el.thresholdVal.textContent = v.toFixed(2);
+                el.thresholdLabel.textContent = I18N.t('threshold_label', { v: v.toFixed(2) });
                 settings = tmsDB.saveSettings({ matchThreshold: v });
                 if (matcher) matcher.config.matchThreshold = v;
             });
