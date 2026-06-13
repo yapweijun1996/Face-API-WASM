@@ -13,7 +13,7 @@
  *  skipWaiting + controllerchange → 页面自动 reload，运行最新代码。
  */
 
-const VERSION = 'tms-v3';
+const VERSION = 'tms-v22';
 const APP_CACHE = `app-${VERSION}`;
 const STATIC_CACHE = `static-${VERSION}`;
 
@@ -25,6 +25,8 @@ const APP_SHELL = [
     './js/tms-i18n.js',
     './js/tms-db.js',
     './js/tms-tracker.js',
+    './js/tms-liveness.js',
+    './js/tms-modal.js',
     './js/tms-app.js'
 ];
 
@@ -57,9 +59,11 @@ self.addEventListener('fetch', (event) => {
     if (req.method !== 'GET') return;
 
     const url = new URL(req.url);
+    // LM Studio (跨源 localhost:6501) 的请求不拦截，直接走网络
+    if (url.origin !== self.location.origin) return;
+
     const isHeavy =
         url.pathname.includes('/models/') ||
-        url.pathname.endsWith('/ort-wasm-simd-threaded.wasm') ||
         url.pathname.includes('/js/lib/') ||
         url.pathname.includes('/js/core/');
 

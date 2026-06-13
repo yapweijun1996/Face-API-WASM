@@ -1,0 +1,181 @@
+/**
+ * tms-liveness.js
+ * ---------------
+ * 视觉大模型（VLM）活体核验 —— MiniCPM-V 经 LM Studio 本地服务。
+ *
+ *   打卡时连续抓 N 帧（默认 1 fps × 5 = 5 秒），整帧（非裁剪）发给本地 MiniCPM-V，
+ *   让它判断「这是真人在场，还是伪造（照片 / 手机或屏幕里的人脸或视频 / 打印件 / 面具）」。
+ *
+ *   相比小型纹理模型（MiniFASNet），VLM 看的是**整帧上下文**：能直接发现
+ *   「有只手举着手机、屏幕有边框/反光、人脸只占画面里一个小矩形」——这正是
+ *   手机屏幕重放最容易暴露的破绽。
+ *
+ *   放行条件：VLM 判 real=true 且 confidence ≥ 阈值。
+ *
+ * ⚠️ 诚实声明：
+ *   - 依赖本机 LM Studio 在跑且已加载视觉模型；服务不可达时**降级放行**（不锁死打卡），
+ *     仅提示「核验不可用」——这意味着此时没有防伪，按需可改为失败即拒。
+ *   - VLM 判别比小模型强，但仍非认证级 PAD，也无法保证挡住高水平 Deepfake；
+ *     务必用你自己的真人 / 照片 / 屏幕样本验证后再依赖。
+ *   - 全程只发往本机 localhost 的 LM Studio，不出网。
+ *
+ * 设计：纯逻辑（提示词、消息体构造、verdict 解析）可在 Node 单测；
+ *       浏览器运行时（抓帧 / fetch）封装在类里。
+ */
+
+(function (root) {
+    'use strict';
+
+    // ============================================================
+    // 纯逻辑（浏览器 + Node 共用，单测覆盖）
+    // ============================================================
+
+    /** 发给 VLM 的活体判别提示词。要求严格 JSON，便于稳定解析。 */
+    const VLM_PROMPT =
+        'You are a presentation-attack-detection (liveness) checker for a face attendance kiosk. ' +
+        'You are given several webcam frames (about 1 fps) of the person trying to clock in. ' +
+        'Decide if this is a GENUINE LIVE PERSON physically present in front of the camera, ' +
+        'or a SPOOF: a photo, a phone/tablet/computer screen showing a face or video, a printed picture, or a mask. ' +
+        'Strong spoof cues: a hand holding a phone or photo; screen bezels, edges, glare or moire; ' +
+        'a rectangular device frame inside the image; a flat 2D look; video-playback artifacts; ' +
+        'or a face that only fills a smaller rectangle inside the frame. ' +
+        'Reply with STRICT JSON only, no extra text: ' +
+        '{"real": true or false, "confidence": a number 0.0-1.0, "reason": "<short reason>"}. ' +
+        'Set real=true only if you are confident it is a live, in-person human.';
+
+    /**
+     * 构造 OpenAI 兼容的 messages（一条 user 消息：提示词 + N 张图）。
+     * @param {string[]} frames dataURL 数组
+     * @param {string} prompt
+     */
+    function buildMessages(frames, prompt) {
+        const content = [{ type: 'text', text: prompt }];
+        (frames || []).forEach(f => content.push({ type: 'image_url', image_url: { url: f } }));
+        return [{ role: 'user', content }];
+    }
+
+    /**
+     * 抓视频整帧 → 下采样 JPEG dataURL（保留上下文，给 VLM 看整画面）。
+     * 纯运行时工具：不依赖 LM Studio，可在健康检查未完成时就用来填滚动缓冲。
+     * @param {HTMLVideoElement} video
+     * @param {{maxEdge?:number, jpegQuality?:number, canvas?:HTMLCanvasElement}} [opts]
+     *        canvas 可由调用方复用，避免每帧 new 一个 canvas。
+     * @returns {string|null} dataURL，视频尚无尺寸时返回 null
+     */
+    function captureVideoFrame(video, opts) {
+        const o = opts || {};
+        const maxEdge = o.maxEdge != null ? o.maxEdge : 512;
+        const jpegQuality = o.jpegQuality != null ? o.jpegQuality : 0.7;
+        const vw = video.videoWidth, vh = video.videoHeight;
+        if (!vw || !vh) return null;
+        const scale = Math.min(1, maxEdge / Math.max(vw, vh));
+        const w = Math.max(1, Math.round(vw * scale));
+        const h = Math.max(1, Math.round(vh * scale));
+        const cvs = o.canvas || document.createElement('canvas');
+        cvs.width = w; cvs.height = h;
+        cvs.getContext('2d').drawImage(video, 0, 0, w, h);
+        return cvs.toDataURL('image/jpeg', jpegQuality);
+    }
+
+    /**
+     * 从模型回复里稳健解析 verdict。容忍前后多余文字、real 为字符串、confidence 缺失。
+     * @returns {{real:boolean, confidence:number, reason:string}|null} 无法解析返回 null
+     */
+    function parseVerdict(text) {
+        if (!text || typeof text !== 'string') return null;
+        const m = text.match(/\{[\s\S]*\}/);   // 第一个 {...} 块
+        if (!m) return null;
+        let o;
+        try { o = JSON.parse(m[0]); } catch (e) { return null; }
+        if (o == null || typeof o !== 'object') return null;
+
+        let real = o.real;
+        if (typeof real === 'string') real = /^(true|yes|1|live|real)$/i.test(real.trim());
+        else real = !!real;
+
+        let c = Number(o.confidence);
+        if (!isFinite(c)) c = real ? 1 : 0;
+        c = Math.max(0, Math.min(1, c));
+
+        return { real: real, confidence: c, reason: String(o.reason == null ? '' : o.reason).slice(0, 200) };
+    }
+
+    // ============================================================
+    // 浏览器运行时：VLM 客户端
+    // ============================================================
+    class VlmLiveness {
+        constructor(opts) {
+            const o = opts || {};
+            // endpoint 为 OpenAI 兼容前缀，如 http://127.0.0.1:6501/v1
+            this.endpoint = (o.endpoint || 'http://127.0.0.1:6501/v1').replace(/\/$/, '');
+            this.model = o.model || 'minicpm-v-4.6';
+            this.threshold = o.threshold != null ? o.threshold : 0.5;
+            this.timeoutMs = o.timeoutMs != null ? o.timeoutMs : 60000;
+            this.maxEdge = o.maxEdge != null ? o.maxEdge : 512;   // 抓帧下采样最长边
+            this.jpegQuality = o.jpegQuality != null ? o.jpegQuality : 0.7;
+            this.ready = false;
+            this._cvs = null;
+        }
+
+        /** 健康检查：GET /models 看 LM Studio 是否在跑。成功置 ready=true。 */
+        async health() {
+            try {
+                const ctrl = new AbortController();
+                const t = setTimeout(() => ctrl.abort(), 5000);
+                const res = await fetch(this.endpoint + '/models', { signal: ctrl.signal });
+                clearTimeout(t);
+                this.ready = !!(res && res.ok);
+            } catch (e) {
+                this.ready = false;
+            }
+            return this.ready;
+        }
+
+        /** 抓当前视频帧 → 下采样 JPEG dataURL（整帧，保留上下文）。 */
+        captureFrame(video) {
+            if (!this._cvs) this._cvs = document.createElement('canvas');
+            return captureVideoFrame(video, { maxEdge: this.maxEdge, jpegQuality: this.jpegQuality, canvas: this._cvs });
+        }
+
+        /**
+         * 把 N 帧发给 MiniCPM-V，返回活体判定。
+         * @param {string[]} frames dataURL 数组
+         * @returns {Promise<{real:boolean, confidence:number, reason:string, raw:string}>}
+         */
+        async verify(frames) {
+            const body = {
+                model: this.model,
+                temperature: 0,
+                max_tokens: 200,
+                messages: buildMessages(frames, VLM_PROMPT)
+            };
+            const ctrl = new AbortController();
+            const t = setTimeout(() => ctrl.abort(), this.timeoutMs);
+            try {
+                const res = await fetch(this.endpoint + '/chat/completions', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body),
+                    signal: ctrl.signal
+                });
+                if (!res.ok) throw new Error('LM Studio HTTP ' + res.status);
+                const j = await res.json();
+                const txt = (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) || '';
+                const v = parseVerdict(txt);
+                if (!v) throw new Error('unparseable verdict: ' + String(txt).slice(0, 100));
+                v.raw = txt;
+                return v;
+            } finally {
+                clearTimeout(t);
+            }
+        }
+    }
+
+    // ============================================================
+    // 导出
+    // ============================================================
+    const api = { VLM_PROMPT, buildMessages, parseVerdict, captureVideoFrame, VlmLiveness };
+    if (typeof module !== 'undefined' && module.exports) module.exports = api;
+    else root.TmsLiveness = api;
+
+})(typeof self !== 'undefined' ? self : this);

@@ -58,7 +58,8 @@ class FaceMatcher {
                 id: u.userId,
                 name: u.name,
                 descriptors: u.descriptors,
-                meanDescriptor: u.meanDescriptor
+                meanDescriptor: u.meanDescriptor,
+                descriptorClusters: u.descriptorClusters
             })));
             console.log(`FaceMatcher: Loaded ${this.registeredUsers.length} users from storage`);
             return { success: true, count: this.registeredUsers.length };
@@ -137,18 +138,31 @@ class FaceMatcher {
                 return;
             }
 
+            const currentUserIndex = this.registeredUsers.length;
+            const clusters = (Array.isArray(user.descriptorClusters) && user.descriptorClusters.length > 0)
+                ? user.descriptorClusters
+                : null;
+
             // 存储用户信息
             this.registeredUsers.push({
                 id: user.id,
                 name: user.name || user.id,
                 descriptorCount: user.descriptors.length,
-                hasMeanDescriptor: !!user.meanDescriptor
+                hasMeanDescriptor: !!user.meanDescriptor,
+                clusterCount: clusters ? clusters.length : 0
             });
 
-            const currentUserIndex = this.registeredUsers.length - 1;
-
-            // 如果有平均特征向量且配置启用，优先使用
-            if (this.config.useMeanDescriptor && user.meanDescriptor) {
+            // 索引优先级（皆为「取最近距离」语义）：
+            //   1) 多簇锚点（K 个质心）——覆盖多角度，比单一均值更准；
+            //   2) 单一均值（meanDescriptor）——旧数据兼容；
+            //   3) 全部原始帧——无均值/无簇时的兜底。
+            if (this.config.useMeanDescriptor && clusters) {
+                clusters.forEach(c => {
+                    const desc = c instanceof Float32Array ? c : new Float32Array(c);
+                    this.descriptors.push(desc);
+                    this.descriptorToUser.push(currentUserIndex);
+                });
+            } else if (this.config.useMeanDescriptor && user.meanDescriptor) {
                 const desc = user.meanDescriptor instanceof Float32Array
                     ? user.meanDescriptor
                     : new Float32Array(user.meanDescriptor);
@@ -205,8 +219,6 @@ class FaceMatcher {
         this.stats.lastMatchTime = matchTime;
         this.stats.totalMatches++;
 
-        // Debug: 输出匹配信息
-        console.log(`🔍 Match Debug: distance=${bestDistance.toFixed(4)}, threshold=${this.config.matchThreshold}, willMatch=${bestDistance < this.config.matchThreshold}`);
 
         // 判断是否匹配
         if (bestDistance < this.config.matchThreshold && bestUserIndex >= 0) {
@@ -279,22 +291,8 @@ class FaceMatcher {
 
     // ========== 工具方法 ==========
 
-    /**
-     * 欧几里得距离
-     */
     _euclideanDistance(a, b) {
-        // 维度不一致时，b[i] 会是 undefined，diff=NaN，最终 sqrt(NaN)=NaN，
-        // 而 NaN < threshold 永远为 false，会让本应匹配的用户被静默判为 NO_MATCH。
-        // 直接返回 Infinity，让该比对自然落选而不是污染结果。
-        if (!a || !b || a.length !== b.length) {
-            return Infinity;
-        }
-        let sum = 0;
-        for (let i = 0; i < a.length; i++) {
-            const diff = a[i] - b[i];
-            sum += diff * diff;
-        }
-        return Math.sqrt(sum);
+        return FaceUtils.euclideanDistance(a, b);
     }
 
     /**

@@ -16,6 +16,22 @@ class FaceStorage {
     }
 
     /**
+     * 包装单个 IDB request，同时监听所属 transaction 的 abort/error，
+     * 防止 QuotaExceededError 或事务中止时 Promise 永远 pending。
+     */
+    _req(request) {
+        return new Promise((resolve, reject) => {
+            request.onsuccess = () => resolve(request.result);
+            request.onerror  = () => reject(request.error);
+            const tx = request.transaction;
+            if (tx) {
+                tx.onabort = () => reject(tx.error || new Error('IndexedDB transaction aborted'));
+                tx.onerror = () => reject(tx.error || new Error('IndexedDB transaction error'));
+            }
+        });
+    }
+
+    /**
      * 初始化 IndexedDB 连接
      */
     async init() {
@@ -53,21 +69,10 @@ class FaceStorage {
      */
     async saveProgress(progressData) {
         if (!this.db) await this.init();
-
-        return new Promise((resolve, reject) => {
-            const tx = this.db.transaction(STORE_PROGRESS, 'readwrite');
-            const store = tx.objectStore(STORE_PROGRESS);
-
-            const data = {
-                id: 'current',
-                timestamp: Date.now(),
-                ...progressData
-            };
-
-            const request = store.put(data);
-            request.onsuccess = () => resolve(true);
-            request.onerror = () => reject(request.error);
-        });
+        const tx = this.db.transaction(STORE_PROGRESS, 'readwrite');
+        const data = { id: 'current', timestamp: Date.now(), ...progressData };
+        await this._req(tx.objectStore(STORE_PROGRESS).put(data));
+        return true;
     }
 
     /**
@@ -75,15 +80,9 @@ class FaceStorage {
      */
     async loadProgress() {
         if (!this.db) await this.init();
-
-        return new Promise((resolve, reject) => {
-            const tx = this.db.transaction(STORE_PROGRESS, 'readonly');
-            const store = tx.objectStore(STORE_PROGRESS);
-            const request = store.get('current');
-
-            request.onsuccess = () => resolve(request.result || null);
-            request.onerror = () => reject(request.error);
-        });
+        const tx = this.db.transaction(STORE_PROGRESS, 'readonly');
+        const result = await this._req(tx.objectStore(STORE_PROGRESS).get('current'));
+        return result || null;
     }
 
     /**
@@ -91,15 +90,9 @@ class FaceStorage {
      */
     async clearProgress() {
         if (!this.db) await this.init();
-
-        return new Promise((resolve, reject) => {
-            const tx = this.db.transaction(STORE_PROGRESS, 'readwrite');
-            const store = tx.objectStore(STORE_PROGRESS);
-            const request = store.delete('current');
-
-            request.onsuccess = () => resolve(true);
-            request.onerror = () => reject(request.error);
-        });
+        const tx = this.db.transaction(STORE_PROGRESS, 'readwrite');
+        await this._req(tx.objectStore(STORE_PROGRESS).delete('current'));
+        return true;
     }
 
     // ========== 用户数据管理 ==========
@@ -109,20 +102,10 @@ class FaceStorage {
      */
     async saveUser(userData) {
         if (!this.db) await this.init();
-
-        return new Promise((resolve, reject) => {
-            const tx = this.db.transaction(STORE_USERS, 'readwrite');
-            const store = tx.objectStore(STORE_USERS);
-
-            const data = {
-                ...userData,
-                registeredAt: Date.now()
-            };
-
-            const request = store.put(data);
-            request.onsuccess = () => resolve(true);
-            request.onerror = () => reject(request.error);
-        });
+        const tx = this.db.transaction(STORE_USERS, 'readwrite');
+        const data = { ...userData, registeredAt: Date.now() };
+        await this._req(tx.objectStore(STORE_USERS).put(data));
+        return true;
     }
 
     /**
@@ -130,15 +113,9 @@ class FaceStorage {
      */
     async getAllUsers() {
         if (!this.db) await this.init();
-
-        return new Promise((resolve, reject) => {
-            const tx = this.db.transaction(STORE_USERS, 'readonly');
-            const store = tx.objectStore(STORE_USERS);
-            const request = store.getAll();
-
-            request.onsuccess = () => resolve(request.result || []);
-            request.onerror = () => reject(request.error);
-        });
+        const tx = this.db.transaction(STORE_USERS, 'readonly');
+        const result = await this._req(tx.objectStore(STORE_USERS).getAll());
+        return result || [];
     }
 
     /**
@@ -146,15 +123,9 @@ class FaceStorage {
      */
     async getUser(userId) {
         if (!this.db) await this.init();
-
-        return new Promise((resolve, reject) => {
-            const tx = this.db.transaction(STORE_USERS, 'readonly');
-            const store = tx.objectStore(STORE_USERS);
-            const request = store.get(userId);
-
-            request.onsuccess = () => resolve(request.result || null);
-            request.onerror = () => reject(request.error);
-        });
+        const tx = this.db.transaction(STORE_USERS, 'readonly');
+        const result = await this._req(tx.objectStore(STORE_USERS).get(userId));
+        return result || null;
     }
 
     /**
@@ -162,15 +133,9 @@ class FaceStorage {
      */
     async deleteUser(userId) {
         if (!this.db) await this.init();
-
-        return new Promise((resolve, reject) => {
-            const tx = this.db.transaction(STORE_USERS, 'readwrite');
-            const store = tx.objectStore(STORE_USERS);
-            const request = store.delete(userId);
-
-            request.onsuccess = () => resolve(true);
-            request.onerror = () => reject(request.error);
-        });
+        const tx = this.db.transaction(STORE_USERS, 'readwrite');
+        await this._req(tx.objectStore(STORE_USERS).delete(userId));
+        return true;
     }
 
     // ========== JSON 导入/导出 ==========
@@ -187,6 +152,9 @@ class FaceStorage {
             name: user.name,
             descriptors: user.descriptors.map(d => Array.from(d)),
             meanDescriptor: user.meanDescriptor ? Array.from(user.meanDescriptor) : null,
+            descriptorClusters: Array.isArray(user.descriptorClusters)
+                ? user.descriptorClusters.map(c => Array.from(c))
+                : null,
             registeredAt: user.registeredAt
         }));
 
@@ -215,13 +183,22 @@ class FaceStorage {
                 const allValid = user.descriptors.every(d => Array.isArray(d) || ArrayBuffer.isView(d));
                 if (!allValid) { skipped++; continue; }
 
+                // 多簇锚点：仅接受「数组的数组（或类型化数组）」，逐簇转 Float32Array；
+                // 格式不符则置 null，匹配器会回退到 meanDescriptor（向后兼容）。
+                const clusters = Array.isArray(user.descriptorClusters)
+                    ? user.descriptorClusters
+                        .filter(c => Array.isArray(c) || ArrayBuffer.isView(c))
+                        .map(c => new Float32Array(c))
+                    : null;
+
                 await this.saveUser({
                     userId: String(user.id),
                     name: user.name != null ? String(user.name) : String(user.id),
                     descriptors: user.descriptors.map(d => new Float32Array(d)),
                     meanDescriptor: (Array.isArray(user.meanDescriptor) || ArrayBuffer.isView(user.meanDescriptor))
                         ? new Float32Array(user.meanDescriptor)
-                        : null
+                        : null,
+                    descriptorClusters: (clusters && clusters.length > 0) ? clusters : null
                 });
                 imported++;
             }

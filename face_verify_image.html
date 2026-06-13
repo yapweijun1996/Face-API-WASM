@@ -481,6 +481,8 @@
     <!-- 3. FaceAPI -->
     <script src="./js/lib/face-api.js"></script>
     <!-- 4. 我们的模块 -->
+    <script src="./js/core/DeviceProfile.js"></script>
+    <script src="./js/core/utils.js"></script>
     <script src="./js/core/FaceStorage.js"></script>
     <script src="./js/core/FaceMatcher.js"></script>
 </head>
@@ -553,7 +555,7 @@
             modelUrl: './models',
 
             detection: {
-                detectorModel: savedSettings.detection?.detectorModel || 'tiny',
+                detectorModel: savedSettings.detection?.detectorModel || (typeof DeviceProfile !== 'undefined' ? DeviceProfile.recommendDetectorModel() : 'tiny'),
                 inputSize: savedSettings.detection?.inputSize || 320,
                 scoreThreshold: savedSettings.detection?.scoreThreshold || 0.5,
             },

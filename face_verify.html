@@ -404,6 +404,9 @@
     <!-- 3. FaceAPI -->
     <script src="./js/lib/face-api.js"></script>
     <!-- 4. 我们的模块 -->
+    <script src="./js/core/DeviceProfile.js"></script>
+    <script src="./js/core/PerfOverlay.js"></script>
+    <script src="./js/core/utils.js"></script>
     <script src="./js/core/FaceStorage.js"></script>
     <script src="./js/core/FaceMatcher.js"></script>
 </head>
@@ -488,7 +491,7 @@
             modelUrl: './models',
 
             detection: {
-                detectorModel: savedSettings.detection?.detectorModel || 'tiny',
+                detectorModel: savedSettings.detection?.detectorModel || (typeof DeviceProfile !== 'undefined' ? DeviceProfile.recommendDetectorModel() : 'tiny'),
                 inputSize: savedSettings.detection?.inputSize || 320,
                 scoreThreshold: savedSettings.detection?.scoreThreshold || 0.5,
             },
@@ -845,6 +848,17 @@
             isDetecting = true;
             timing.lastFpsUpdate = performance.now();
 
+            // 开发性能浮层（仅 ?debug=1）
+            if (typeof PerfOverlay !== 'undefined') {
+                PerfOverlay.init();
+                PerfOverlay.setInfo({
+                    model: CONFIG.detection.detectorModel,
+                    backend: (typeof faceapi !== 'undefined' && faceapi.tf && faceapi.tf.getBackend) ? faceapi.tf.getBackend() : '',
+                    users: faceMatcher.getUserCount(),
+                    clusters: faceMatcher.descriptors.length
+                });
+            }
+
             const loop = async () => {
                 if (!isDetecting || video.paused || video.ended) {
                     return;
@@ -860,6 +874,7 @@
                         .withFaceDescriptor();
 
                     const detectEnd = performance.now();
+                    if (typeof PerfOverlay !== 'undefined') PerfOverlay.recordInference(detectEnd - detectStart, detectEnd);
 
                     // FPS calculation
                     timing.detectionCount++;
@@ -891,6 +906,7 @@
 
                         // Match face
                         const matchResultData = faceMatcher.findBestMatch(detection.descriptor);
+                        if (typeof PerfOverlay !== 'undefined') PerfOverlay.recordMatch(matchResultData.matchTime);
 
                         // Draw box with color based on match
                         const boxColor = matchResultData.status === 'matched' ? '#00d084' : '#ff4757';

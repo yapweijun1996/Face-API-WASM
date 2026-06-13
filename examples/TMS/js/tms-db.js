@@ -19,13 +19,19 @@ const STORE_ATTENDANCE = 'attendance';
 
 const SETTINGS_KEY = 'tms_settings';
 const DEFAULT_SETTINGS = {
-    matchThreshold: 0.5,        // 距离小于此值才认定为同一人（越小越严格）
+    matchThreshold: 0.32,       // 距离小于此值才认定为同一人（越小越严格）
     clockCooldownMs: 60000,     // 同一人两次打卡的最小间隔，避免连续误触发
     enrollCaptures: 12,         // 注册时采集的帧数
     workStart: '09:00',         // 上班时间
     workEnd: '18:00',           // 下班时间
     graceMin: 10,               // 迟到宽限（分钟）
-    liveness: false             // ONNX 真人检测（防照片/屏幕）：默认关闭，用户可在设置页手动开启
+    liveness: false,            // AI 视觉活体核验（MiniCPM-V via LM Studio）：默认关闭
+    livenessRealProb: 0.50,     // VLM「真人置信度」放行阈值（越大越严格）；务必用真实样本校准
+    vlmEndpoint: 'http://127.0.0.1:6501/v1',   // LM Studio OpenAI 兼容前缀（端口随 LM Studio 设置改）
+    vlmModel: 'minicpm-v-4.6',  // 已加载的视觉模型 id（LM Studio「API Model Identifier」）
+    soundEnabled: true,         // 声音提示总控：打卡提示音 + 语音播报的总开关
+    speakEnabled: true,         // 子项：打卡时语音播报员工姓名（Web Speech API），受 soundEnabled 约束
+    speakVoiceURI: { en: '', zh: '' }   // 按 UI 语言分槽的 voiceURI；空字符串 = 该语言用浏览器默认
 };
 
 class TmsDB {
@@ -90,10 +96,53 @@ class TmsDB {
             descriptors: (emp.descriptors || []).map(toF32),
             meanDescriptor: emp.meanDescriptor ? toF32(emp.meanDescriptor) : null,
             photo: emp.photo || null,           // 注册时抓取的脸部缩略图（dataURL）
+            capturedFrames: Array.isArray(emp.capturedFrames) ? emp.capturedFrames.filter(Boolean) : [],
             enrolledAt: emp.enrolledAt || Date.now()
         };
         await this._req(this._tx(STORE_EMPLOYEES, 'readwrite').put(data));
         return data;
+    }
+
+    async updateEmployeeProfile(id, patch) {
+        await this.init();
+        const employeeId = String(id);
+        const nextName = String(patch && patch.name || '').trim();
+        const nextDepartment = String(patch && patch.department || '').trim();
+        if (!nextName) throw new Error('employee.name required');
+        const current = await new Promise((resolve, reject) => {
+            const tx = this.db.transaction(STORE_EMPLOYEES, 'readwrite');
+            const store = tx.objectStore(STORE_EMPLOYEES);
+            const getReq = store.get(employeeId);
+            let updated = null;
+            getReq.onsuccess = () => {
+                const current = getReq.result;
+                if (!current) {
+                    tx.abort();
+                    reject(new Error('employee not found'));
+                    return;
+                }
+                current.name = nextName;
+                current.department = nextDepartment;
+                updated = current;
+                store.put(current);
+            };
+            getReq.onerror = () => reject(getReq.error);
+            tx.oncomplete = () => resolve(updated);
+            tx.onabort = () => {
+                if (updated) reject(tx.error || new Error('IDB transaction aborted'));
+            };
+            tx.onerror = () => reject(tx.error || new Error('IDB transaction error'));
+        });
+        await this.updateAttendanceEmployeeName(employeeId, nextName);
+        return current;
+    }
+
+    async updateEmployeeName(id, name) {
+        const current = (await this.getAllEmployees()).find(emp => String(emp.id) === String(id));
+        return this.updateEmployeeProfile(id, {
+            name,
+            department: current ? current.department : ''
+        });
     }
 
     async getAllEmployees() {
@@ -154,6 +203,29 @@ class TmsDB {
         await this.init();
         await this._req(this._tx(STORE_ATTENDANCE, 'readwrite').clear());
         return true;
+    }
+
+    async updateAttendanceEmployeeName(employeeId, employeeName) {
+        await this.init();
+        const id = String(employeeId);
+        const name = String(employeeName || '');
+        return new Promise((resolve, reject) => {
+            const tx = this.db.transaction(STORE_ATTENDANCE, 'readwrite');
+            const store = tx.objectStore(STORE_ATTENDANCE);
+            const req = store.index('employeeId').openCursor(IDBKeyRange.only(id));
+            req.onsuccess = () => {
+                const cur = req.result;
+                if (!cur) return;
+                const rec = cur.value;
+                rec.employeeName = name;
+                cur.update(rec);
+                cur.continue();
+            };
+            req.onerror = () => reject(req.error);
+            tx.oncomplete = () => resolve(true);
+            tx.onabort = () => reject(tx.error || new Error('IDB transaction aborted'));
+            tx.onerror = () => reject(tx.error || new Error('IDB transaction error'));
+        });
     }
 
     // ========== 设置 (localStorage) ==========

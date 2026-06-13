@@ -26,8 +26,72 @@ const DEFAULT_CONFIG = {
     qualityScoreThreshold: 0.5,         // 人脸置信度阈值
     minFaceAreaRatio: 0.05,             // 人脸最小面积比例（相对于画面）
     consistencyThreshold: 0.4,          // 同一人判定阈值
-    autoSaveProgress: true              // 是否自动保存进度到 IndexedDB
+    autoSaveProgress: true,             // 是否自动保存进度到 IndexedDB
+    clusterCount: 3,                    // 多簇特征：把 N 帧聚成 K 个锚点（提升多角度匹配）
+    saveProgressDebounceMs: 200         // 进度写盘去抖（避免每帧一次 IDB 事务）
 };
+
+/**
+ * 极简 k-means（纯逻辑，可单测）。把 descriptors 聚成 k 个质心。
+ * 确定性初始化（均匀取点）+ 固定迭代，便于复现与测试。
+ * @param {Float32Array[]} descriptors
+ * @param {number} k
+ * @returns {Float32Array[]} k 个质心（k>n 时退化为每帧各自成簇）
+ */
+function computeKMeans(descriptors, k) {
+    if (!descriptors || descriptors.length === 0) return [];
+    const n = descriptors.length;
+    const dim = descriptors[0].length;
+    if (k >= n) return descriptors.map(d => new Float32Array(d));
+    if (k <= 1) {
+        // 单簇 = 均值
+        const mean = new Float32Array(dim);
+        for (const d of descriptors) for (let i = 0; i < dim; i++) mean[i] += d[i];
+        for (let i = 0; i < dim; i++) mean[i] /= n;
+        return [mean];
+    }
+
+    // 确定性初始化：均匀间隔取 k 帧作为初始质心
+    const centroids = [];
+    for (let c = 0; c < k; c++) {
+        const idx = Math.floor((c * n) / k);
+        centroids.push(new Float32Array(descriptors[idx]));
+    }
+
+    const assign = new Array(n).fill(0);
+    const MAX_ITER = 10;
+    for (let iter = 0; iter < MAX_ITER; iter++) {
+        let changed = false;
+        // 分配
+        for (let p = 0; p < n; p++) {
+            let best = 0, bestDist = Infinity;
+            for (let c = 0; c < k; c++) {
+                let sum = 0;
+                const cen = centroids[c], pt = descriptors[p];
+                for (let i = 0; i < dim; i++) { const diff = pt[i] - cen[i]; sum += diff * diff; }
+                if (sum < bestDist) { bestDist = sum; best = c; }
+            }
+            if (assign[p] !== best) { assign[p] = best; changed = true; }
+        }
+        // 更新质心
+        const sums = Array.from({ length: k }, () => new Float32Array(dim));
+        const counts = new Array(k).fill(0);
+        for (let p = 0; p < n; p++) {
+            const c = assign[p]; counts[c]++;
+            const pt = descriptors[p];
+            for (let i = 0; i < dim; i++) sums[c][i] += pt[i];
+        }
+        for (let c = 0; c < k; c++) {
+            if (counts[c] === 0) continue; // 空簇：保留旧质心
+            for (let i = 0; i < dim; i++) centroids[c][i] = sums[c][i] / counts[c];
+        }
+        if (!changed && iter > 0) break;
+    }
+
+    // 丢弃空簇
+    const used = new Set(assign);
+    return centroids.filter((_, c) => used.has(c));
+}
 
 class FaceRegistrationManager {
     constructor(config = {}) {
@@ -46,6 +110,10 @@ class FaceRegistrationManager {
 
         // 计算结果
         this.meanDescriptor = null;
+        this.descriptorClusters = null;   // 多簇锚点（K 个质心）
+
+        // 进度写盘去抖句柄
+        this._saveDebounceTimer = null;
 
         // 回调函数
         this.onStateChange = null;
@@ -91,6 +159,7 @@ class FaceRegistrationManager {
         this.descriptors = [];
         this.capturedFrames = [];
         this.meanDescriptor = null;
+        this.descriptorClusters = null;
 
         this._setState(RegistrationState.COLLECTING);
         return true;
@@ -118,6 +187,11 @@ class FaceRegistrationManager {
         this.descriptors = [];
         this.capturedFrames = [];
         this.meanDescriptor = null;
+        this.descriptorClusters = null;
+
+        // 先取消待执行的去抖写盘：否则它可能在 clearProgress 之后才触发，
+        // 把刚清掉的进度又写回去（去抖 vs 清理竞态）。
+        this._cancelScheduledSave();
 
         // 必须 await：否则 clearProgress 可能在新一轮注册写入进度后才完成，
         // 把刚保存的新进度删掉（restart 竞态）。
@@ -197,9 +271,9 @@ class FaceRegistrationManager {
             }
         }
 
-        // 保存进度
+        // 保存进度（去抖：连拍时不必每帧一次 IDB 事务）
         if (this._storage && this.config.autoSaveProgress) {
-            this._saveProgress();
+            this._scheduleSaveProgress();
         }
 
         // 触发回调
@@ -237,7 +311,7 @@ class FaceRegistrationManager {
         this.capturedFrames.pop();
 
         if (this._storage && this.config.autoSaveProgress) {
-            this._saveProgress();
+            this._scheduleSaveProgress();
         }
 
         if (this.onProgress) {
@@ -255,9 +329,16 @@ class FaceRegistrationManager {
     async _finalize() {
         this._setState(RegistrationState.COMPUTING);
 
+        // 进入计算阶段，取消任何待执行的去抖写盘（马上就要 saveUser + clearProgress）
+        this._cancelScheduledSave();
+
         try {
-            // 计算平均特征向量
+            // 计算平均特征向量（保留：作为旧匹配器/降级路径的兼容字段）
             this.meanDescriptor = this._computeMeanDescriptor(this.descriptors);
+
+            // 计算多簇锚点：用 K 个质心代表不同角度/光照，匹配时取最近簇，
+            // 比单一均值更能覆盖姿态差异。向后兼容——老数据无此字段时匹配器回退到 mean。
+            this.descriptorClusters = computeKMeans(this.descriptors, this.config.clusterCount);
 
             // 保存到 IndexedDB
             if (this._storage) {
@@ -266,6 +347,7 @@ class FaceRegistrationManager {
                     name: this.userName,
                     descriptors: this.descriptors,
                     meanDescriptor: this.meanDescriptor,
+                    descriptorClusters: this.descriptorClusters,
                     frameCount: this.descriptors.length
                 });
 
@@ -281,7 +363,8 @@ class FaceRegistrationManager {
                     userId: this.userId,
                     userName: this.userName,
                     descriptorCount: this.descriptors.length,
-                    meanDescriptor: this.meanDescriptor
+                    meanDescriptor: this.meanDescriptor,
+                    descriptorClusters: this.descriptorClusters
                 });
             }
 
@@ -397,20 +480,8 @@ class FaceRegistrationManager {
         return minDist <= this.config.consistencyThreshold;
     }
 
-    /**
-     * 欧几里得距离
-     */
     _euclideanDistance(a, b) {
-        // 维度不一致直接返回 Infinity，避免 NaN 污染相似度/一致性判定。
-        if (!a || !b || a.length !== b.length) {
-            return Infinity;
-        }
-        let sum = 0;
-        for (let i = 0; i < a.length; i++) {
-            const diff = a[i] - b[i];
-            sum += diff * diff;
-        }
-        return Math.sqrt(sum);
+        return FaceUtils.euclideanDistance(a, b);
     }
 
     /**
@@ -484,6 +555,28 @@ class FaceRegistrationManager {
 
     // ========== 进度持久化 ==========
 
+    /**
+     * 去抖调度进度写盘：活动停止 debounceMs 后才真正写一次，避免连拍时每帧一次 IDB 事务。
+     */
+    _scheduleSaveProgress() {
+        if (!this._storage) return;
+        const delay = this.config.saveProgressDebounceMs;
+        if (!delay || delay <= 0) { this._saveProgress(); return; }
+        if (this._saveDebounceTimer) clearTimeout(this._saveDebounceTimer);
+        this._saveDebounceTimer = setTimeout(() => {
+            this._saveDebounceTimer = null;
+            this._saveProgress();
+        }, delay);
+    }
+
+    /** 取消待执行的去抖写盘（清理/计算阶段调用，防止写回已清除的进度）。 */
+    _cancelScheduledSave() {
+        if (this._saveDebounceTimer) {
+            clearTimeout(this._saveDebounceTimer);
+            this._saveDebounceTimer = null;
+        }
+    }
+
     async _saveProgress() {
         if (!this._storage) return;
 
@@ -538,6 +631,7 @@ class FaceRegistrationManager {
             name: this.userName,
             descriptors: this.descriptors.map(d => Array.from(d)),
             meanDescriptor: this.meanDescriptor ? Array.from(this.meanDescriptor) : null,
+            descriptorClusters: this.descriptorClusters ? this.descriptorClusters.map(c => Array.from(c)) : null,
             captureCount: this.descriptors.length,
             registeredAt: Date.now()
         };
@@ -563,5 +657,5 @@ class FaceRegistrationManager {
 
 // 导出
 if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { FaceRegistrationManager, RegistrationState };
+    module.exports = { FaceRegistrationManager, RegistrationState, computeKMeans };
 }

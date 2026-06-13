@@ -20,10 +20,23 @@
     const WASM_PATH = BASE + 'js/lib/';
 
     const SAFE_MATCH_THRESHOLD = 0.32;
-    const MIN_CLOCK_CONFIDENCE = 80;
-    const LIVENESS_CHALLENGE_TIMEOUT_MS = 6000;
-    const BLINK_EAR_CLOSED = 0.20;
-    const BLINK_EAR_OPEN = 0.24;
+    // 打卡放行的最低置信度。FaceMatcher: confidence=(1-distance/1.2)*100，
+    // 故 matchThreshold=0.32 对应 confidence≈73.3。此下限须 ≤ 73.3，否则会比
+    // matchThreshold 还严、把阈值内的合法匹配也拒掉（用户本人打不上卡）。
+    // 设 70：让用户可调的 matchThreshold（设置页滑块）成为真正的闸门。
+    const MIN_CLOCK_CONFIDENCE = 70;
+    const WEAK_MATCH_WARN_MS = 3000;      // 弱匹配 console.warn 的每员工限流间隔，避免逐帧刷屏
+    const SPOOF_HOLD_MS = 2000;           // 判伪/失败后停留多久再重置重试，给用户看清提示
+    // VLM 活体核验：滚动缓冲。摄像头持续以 1fps 缓存最近若干帧；识别通过那刻，
+    // 取「已缓存的前 N 秒」(t-3/-2/-1) 发给大模型做最后一道闸——无需识别后再等。
+    const VLM_FRAME_COUNT = 3;            // 送审帧数（≈ 取前 3 秒）
+    const VLM_FRAME_INTERVAL_MS = 1000;  // 缓冲抓帧间隔（1fps）
+    const VLM_WINDOW_MS = 3500;          // 送审帧须落在最近这段时间内（容忍漏帧）
+    // 送审帧压缩：越小越省 VLM 推理算力（更少视觉 token → 更快）。整帧上下文（手/屏幕边框/2D 平面）
+    // 在 448px 仍清晰可辨；但 JPEG 0.6 会牺牲高频纹理（moire），本设计本就不依赖纹理，可接受。
+    const VLM_FRAME_MAXEDGE = 448;       // 送审帧最长边（px）
+    const VLM_FRAME_QUALITY = 0.6;       // 送审帧 JPEG 质量
+    const BLANK_FRAME_LUMA = 16;         // 平均亮度低于此（0-255）视为黑帧：摄像头预热/重开瞬间会吐黑帧，丢弃不入缓冲
 
     // ---------- 运行状态 ----------
     let settings = tmsDB.getSettings();
@@ -33,6 +46,14 @@
     let matcher = null;
     let empPhotos = new Map();        // employeeId -> 脸部缩略图 dataURL，供打卡卡片显示
     let regManager = null;
+    // VLM 活体核验客户端（MiniCPM-V via LM Studio）。按需初始化（健康检查）：
+    //  - null：未初始化；非 null 且 .ready 表示 LM Studio 可达
+    let liveness = null;
+    let livenessInitPromise = null;   // 单飞，避免并发重复初始化
+    let gating = false;               // AI 核验进行中：暂停人脸检测（弹窗 + 纯等待，省资源）
+    let clockEpoch = 0;               // 每次开/关摄像头 +1；核验回调据此判断是否仍属同一会话
+    let frameRing = [];               // 滚动帧缓冲 [{t, url}]，持续以 1fps 缓存最近画面
+    let lastFrameCapAt = 0;           // 上次往缓冲抓帧的时间
     let appMode = 'idle';            // 'idle' | 'clock' | 'enroll'
     let stream = null;
     let activeVideo = null;
@@ -41,6 +62,7 @@
 
     // 打卡防抖：记录每个员工最近一次成功打卡时间，冷却期内忽略
     const cooldown = new Map();
+    const weakMatchWarnedAt = new Map();   // employeeId -> 上次弱匹配告警时间（限流，避免逐帧刷屏）
     let lastClockKey = null;          // 当前 clock 面板展示的员工，避免重复渲染
 
     // 实时打卡（自动）+ 真人检测状态
@@ -65,20 +87,7 @@
 
     const detectorOptions = () => new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.5 });
 
-    // Facenox MiniFASNetV2-SE ONNX anti-spoofing: input 1x3x128x128 RGB float32 [0,1].
-    // Output logits are [real, spoof]; pass when sigmoid(real - spoof) >= threshold.
-    const LIVENESS_MODEL_NAME = 'FacenoxMiniFASNetV2SE';
-    const LIVENESS_MODEL_URL = './models/facenox_minifasv2se_quantized.onnx';
-    const LIVENESS_INPUT_SIZE = 128;
-    const LIVENESS_REAL_CLASS_INDEX = 0;
-    const LIVENESS_LIVE_THRESHOLD = 0.50;
-    const LIVENESS_CROP_SCALE = 1.5;
-    const antiSpoof = {
-        session: null,
-        loading: null,
-        inputName: null,
-        outputName: null
-    };
+    // Local demo-only challenge. Production PAD/liveness must use a certified SDK/service.
 
     // ---------- DOM ----------
     const $ = (id) => document.getElementById(id);
@@ -90,11 +99,22 @@
             'empList', 'empName', 'empDept', 'enrollBtn', 'empEmpty',
             'enrollModal', 'enrollVideo', 'enrollOverlay', 'enrollBar', 'enrollText',
             'enrollThumbs', 'enrollCancel', 'enrollTitle',
+            'appModal',
             'recordsBody', 'recordsSummary', 'recordsEmpty', 'exportCsvBtn', 'clearRecordsBtn',
             'thresholdInput', 'thresholdVal', 'thresholdLabel', 'livenessToggle',
+            'vlmFields', 'realProbLabel', 'realProbVal', 'realProbInput', 'vlmEndpointInput', 'vlmModelInput',
+            'soundToggle', 'soundFields', 'speakToggle', 'voiceSelect', 'voiceTestBtn', 'voiceFields',
+            'livenessModal', 'lmCard', 'lmBadge', 'lmTitle', 'lmSub', 'lmBar', 'lmFrames',
             'workStartInput', 'workEndInput', 'graceInput',
             'statInNow', 'statLate', 'statStaff', 'whosInList', 'whosInEmpty', 'weeklyChart'
         ].forEach(id => { el[id] = $(id); });
+    }
+
+    // 引用 index.html 顶部 SVG 精灵里的图标；用于 JS 动态生成的 DOM。
+    // 图标 id 固定、无用户数据，innerHTML 注入安全。dot 用实心圆（.ico.dot）。
+    function icon(name) {
+        const cls = name === 'dot' ? 'ico dot' : 'ico';
+        return `<svg class="${cls}"><use href="#i-${name}"></use></svg>`;
     }
 
     // ============================================================
@@ -102,6 +122,7 @@
     // ============================================================
     async function boot() {
         cacheDom();
+        TmsModal.init({ root: el.appModal, i18n: I18N, icon });
         I18N.apply();
         el.langBtn.textContent = I18N.other;
         I18N.onChange.push(onLangChange);
@@ -175,99 +196,228 @@
         await faceapi.detectSingleFace(c, detectorOptions());
     }
 
-    async function initAntiSpoof() {
-        if (antiSpoof.session) return antiSpoof.session;
-        if (antiSpoof.loading) return antiSpoof.loading;
-        antiSpoof.loading = (async () => {
-            if (!window.ort) throw new Error('ONNX Runtime Web not loaded');
-            ort.env.wasm.wasmPaths = './';
-            ort.env.wasm.numThreads = 1;
-            const session = await ort.InferenceSession.create(LIVENESS_MODEL_URL, {
-                executionProviders: ['wasm']
+    /**
+     * 按需初始化 VLM 活体核验客户端（单飞）并做健康检查（探测 LM Studio 是否在跑）。
+     * 不可达不致命：降级放行（不锁死打卡），仅提示「核验不可用」。
+     * @returns {Promise<object|null>} 就绪的 client（this.ready 反映可达性）或 null
+     */
+    function ensureLiveness() {
+        if (liveness && liveness.ready) return Promise.resolve(liveness);
+        if (livenessInitPromise) return livenessInitPromise;
+        if (typeof TmsLiveness === 'undefined') {
+            toast(I18N.t('liveness_engine_fail', { msg: 'TmsLiveness not loaded' }), 'err');
+            return Promise.resolve(null);
+        }
+        livenessInitPromise = (async () => {
+            const eng = new TmsLiveness.VlmLiveness({
+                endpoint: settings.vlmEndpoint,
+                model: settings.vlmModel,
+                threshold: settings.livenessRealProb,
+                maxEdge: 512
             });
-            antiSpoof.session = session;
-            antiSpoof.inputName = session.inputNames[0];
-            antiSpoof.outputName = session.outputNames[0];
-            return session;
-        })().finally(() => {
-            antiSpoof.loading = null;
+            const prevHint = el.clockHint ? el.clockHint.textContent : '';
+            if (el.clockHint && appMode === 'clock') el.clockHint.textContent = I18N.t('liveness_loading');
+            const ok = await eng.health();
+            liveness = eng;
+            console.log('TMS VLM liveness:', { endpoint: eng.endpoint, model: eng.model, reachable: ok });
+            if (ok) toast(I18N.t('liveness_loaded', { caps: eng.model }), 'ok');
+            else toast(I18N.t('liveness_engine_fail', { msg: eng.endpoint }), 'err');
+            if (el.clockHint && appMode === 'clock' && el.clockHint.textContent === I18N.t('liveness_loading')) {
+                el.clockHint.textContent = prevHint;
+            }
+            return liveness;
+        })().catch((e) => {
+            console.error('TMS VLM liveness init failed', e);
+            toast(I18N.t('liveness_engine_fail', { msg: e.message }), 'err');
+            livenessInitPromise = null;   // 允许下次重试
+            return null;
         });
-        return antiSpoof.loading;
+        return livenessInitPromise;
     }
 
-    function softmax(values) {
-        const max = Math.max(...values);
-        const exps = values.map(v => Math.exp(v - max));
-        const sum = exps.reduce((a, b) => a + b, 0) || 1;
-        return exps.map(v => v / sum);
+    /** 重置某 track 的活体读数（人脸框上的「真人置信度」，核验闸成功后写回）。 */
+    function resetLiveness(d) {
+        d.realProb = null;        // VLM confidence，供人脸框读数展示；其余核验态现由 gate 内的局部变量与 gating 管理
     }
 
-    function pointDistance(a, b) {
-        return Math.hypot(a.x - b.x, a.y - b.y);
+    // ---- VLM 送审用的滚动帧缓冲（与 liveness 客户端解耦）----
+    // 进入打卡页就持续以 1fps 抓整帧进缓冲（哪怕健康检查还没完成、哪怕人脸还没识别）。
+    // 这样人脸一旦识别通过，「识别之前」的画面已经在缓冲里，直接取最近 N 帧送审，
+    // 无需识别后再傻等 N 秒——这正是用户要的「取 t-3/-2/-1 秒」。
+    let ringCanvas = null;
+
+    /** 估算 canvas 平均亮度，判断是否黑帧（摄像头预热/重开瞬间会吐黑帧）。取不到像素则不拦。 */
+    function frameTooDark(canvas) {
+        try {
+            const ctx = canvas.getContext('2d');
+            const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+            let sum = 0, n = 0;
+            for (let i = 0; i < data.length; i += 16 * 4) {   // 每 16 像素稀疏采样，够估均值且快
+                sum += data[i] + data[i + 1] + data[i + 2]; n += 3;
+            }
+            return n > 0 && (sum / n) < BLANK_FRAME_LUMA;
+        } catch (e) { return false; }
     }
 
-    function eyeAspectRatio(eye) {
-        if (!eye || eye.length < 6) return 1;
-        return (pointDistance(eye[1], eye[5]) + pointDistance(eye[2], eye[4])) / (2 * pointDistance(eye[0], eye[3]) || 1);
+    /** 抓一帧送审用的整帧（压缩 + 黑帧过滤）。黑帧返回 null。 */
+    function grabSendFrame() {
+        if (typeof TmsLiveness === 'undefined' || !activeVideo) return null;
+        if (!ringCanvas) ringCanvas = document.createElement('canvas');
+        const url = TmsLiveness.captureVideoFrame(activeVideo, { maxEdge: VLM_FRAME_MAXEDGE, jpegQuality: VLM_FRAME_QUALITY, canvas: ringCanvas });
+        if (!url || frameTooDark(ringCanvas)) return null;   // 丢弃黑帧
+        return url;
     }
 
-    function updateBlinkChallenge(data, landmarks) {
-        if (!landmarks || data.blinkPassed) return;
-        const left = landmarks.getLeftEye();
-        const right = landmarks.getRightEye();
-        const ear = (eyeAspectRatio(left) + eyeAspectRatio(right)) / 2;
-        data.eyeAspectRatio = ear;
-        if (ear < BLINK_EAR_CLOSED) data.eyeClosed = true;
-        if (data.eyeClosed && ear > BLINK_EAR_OPEN) {
-            data.eyeClosed = false;
-            data.blinkPassed = true;
+    function captureRingFrame(now) {
+        if (!settings.liveness || appMode !== 'clock' || !activeVideo) return;
+        if (now - lastFrameCapAt < VLM_FRAME_INTERVAL_MS) return;   // 限流到 1fps
+        const url = grabSendFrame();
+        if (!url) return;   // 黑帧不入缓冲；不推进 lastFrameCapAt，下个 tick 立即重试，尽快补上真帧
+        lastFrameCapAt = now;
+        frameRing.push({ t: now, url });
+        // 只保留覆盖送审窗口所需的最近若干帧，防止无限增长
+        const cutoff = now - (VLM_WINDOW_MS + VLM_FRAME_INTERVAL_MS * 2);
+        while (frameRing.length && frameRing[0].t < cutoff) frameRing.shift();
+    }
+
+    /**
+     * 取「识别前已缓冲」的最近 N 帧（≈ t-3/-2/-1 秒）做最后一道闸。
+     * 帧数不足（刚开摄像头不到 N 秒）或最旧那帧过旧（如刚切回前台）→ 返回 null，等缓冲攒够。
+     */
+    function recentRingFrames(now) {
+        if (frameRing.length < VLM_FRAME_COUNT) return null;
+        const recent = frameRing.slice(-VLM_FRAME_COUNT);
+        if (now - recent[0].t > VLM_WINDOW_MS) return null;
+        return recent.map(f => f.url);
+    }
+
+    // ============================================================
+    // AI 核验弹窗（打卡前最后一道闸）：弹窗 + 暂停检测 + 送大模型 + 展示结果
+    // ============================================================
+    const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+    function renderLmFrames(frames) {
+        if (!el.lmFrames) return;
+        el.lmFrames.innerHTML = '';
+        (frames || []).forEach(url => {
+            const img = document.createElement('img');
+            img.src = url;
+            el.lmFrames.appendChild(img);
+        });
+    }
+
+    /** 打开「正在送 AI 核验」弹窗（loading 态）。 */
+    function openLivenessModal(frames) {
+        if (!el.livenessModal) return;
+        renderLmFrames(frames);
+        el.lmCard.classList.remove('ok', 'bad', 'warn');
+        el.lmBadge.innerHTML = icon('cpu');
+        el.lmBar.className = 'indet';            // 不确定进度：滑块来回动
+        el.lmBar.style.width = '';
+        el.lmTitle.textContent = I18N.t('vlm_modal_sending');
+        el.lmSub.textContent = I18N.t('vlm_modal_wait');
+        el.livenessModal.classList.add('show');
+    }
+
+    /** 展示核验结果：kind = 'real' | 'fake' | 'unavailable' | 'error'。 */
+    function showLivenessResult(kind, v) {
+        if (!el.livenessModal) return;
+        el.lmBar.className = '';                  // 停掉 loading 动画
+        el.lmBar.style.width = '100%';
+        el.lmCard.classList.remove('ok', 'bad', 'warn');
+        const reason = v && v.reason ? v.reason : '';
+        if (kind === 'real') {
+            el.lmCard.classList.add('ok');
+            el.lmBadge.innerHTML = icon('check-circle');
+            el.lmTitle.textContent = I18N.t('vlm_modal_real', { p: Math.round(v.confidence * 100) });
+            el.lmSub.textContent = reason;
+        } else if (kind === 'fake') {
+            el.lmCard.classList.add('bad');
+            el.lmBadge.innerHTML = icon('x-circle');
+            el.lmTitle.textContent = I18N.t('vlm_modal_fake', { p: Math.round(v.confidence * 100) });
+            el.lmSub.textContent = reason;
+        } else {                                  // unavailable / error → fail-open
+            el.lmCard.classList.add('warn');
+            el.lmBadge.innerHTML = icon('alert');
+            el.lmTitle.textContent = I18N.t(kind === 'unavailable' ? 'vlm_modal_unavailable' : 'vlm_modal_error');
+            el.lmSub.textContent = '';
         }
     }
 
-    function makeLivenessTensor(video, box) {
-        const faceSide = Math.max(box.width, box.height);
-        const maxSquare = Math.min(video.videoWidth, video.videoHeight) * 0.96;
-        const size = Math.max(faceSide * 1.15, Math.min(faceSide * LIVENESS_CROP_SCALE, maxSquare));
-        const cx = box.x + box.width / 2;
-        const cy = box.y + box.height / 2;
-        const sx = Math.max(0, Math.min(video.videoWidth - size, cx - size / 2));
-        const sy = Math.max(0, Math.min(video.videoHeight - size, cy - size / 2));
-
-        const canvas = document.createElement('canvas');
-        canvas.width = LIVENESS_INPUT_SIZE;
-        canvas.height = LIVENESS_INPUT_SIZE;
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(video, sx, sy, size, size, 0, 0, LIVENESS_INPUT_SIZE, LIVENESS_INPUT_SIZE);
-
-        const rgba = ctx.getImageData(0, 0, LIVENESS_INPUT_SIZE, LIVENESS_INPUT_SIZE).data;
-        const pixels = LIVENESS_INPUT_SIZE * LIVENESS_INPUT_SIZE;
-        const input = new Float32Array(3 * pixels);
-        for (let i = 0; i < pixels; i++) {
-            const p = i * 4;
-            input[i] = rgba[p] / 255;
-            input[pixels + i] = rgba[p + 1] / 255;
-            input[2 * pixels + i] = rgba[p + 2] / 255;
-        }
-        return new ort.Tensor('float32', input, [1, 3, LIVENESS_INPUT_SIZE, LIVENESS_INPUT_SIZE]);
+    function closeLivenessModal() {
+        if (!el.livenessModal) return;
+        el.livenessModal.classList.remove('show');
+        el.lmBar.className = '';
+        el.lmBar.style.width = '';
     }
 
-    async function predictLiveness(video, box) {
-        const session = await initAntiSpoof();
-        const tensor = makeLivenessTensor(video, box);
-        const output = await session.run({ [antiSpoof.inputName]: tensor });
-        const raw = Array.from(output[antiSpoof.outputName].data).slice(0, 2);
-        const logitDiff = raw[0] - raw[1];
-        const realScore = 1 / (1 + Math.exp(-logitDiff));
-        const prob = [realScore, 1 - realScore];
-        const label = realScore >= 0.5 ? 0 : 1;
-        const passed = realScore >= LIVENESS_LIVE_THRESHOLD;
-        return {
-            live: realScore,
-            print: 0,
-            replay: prob[1],
-            label,
-            passed
-        };
+    /**
+     * 打卡前的 AI 核验闸（异步、fire-and-forget）：
+     *   暂停检测 → 弹窗 loading → 送 N 帧给大模型 → 真人则打卡、伪造则拒、不可达则放行 → 关窗恢复检测。
+     * epoch 守卫：若核验期间摄像头被关/切走（clockEpoch 变了），回调一律不再打卡/不动 UI。
+     */
+    async function startLivenessGate(emp, action, frames, box, track) {
+        const epoch = clockEpoch;
+        const alive = () => epoch === clockEpoch;   // 仍是发起核验时的那次会话
+        gating = true;
+        // 调用方（hold 满那刻）已保证 frames 满 VLM_FRAME_COUNT 张真帧，这里不再兜底补抓，杜绝送少于 N 张。
+        // 万一仍为空（极端退化）→ 下方走 fail-open，绝不送空/不足。
+        openLivenessModal(frames);   // 先把要送的照片显示出来（让用户知道送了哪几张去核验）
+        stopCameraStream();          // 关摄像头：核验期间不占相机、省资源 + 隐私（LED 灭）
+        const kb = (frames && frames.length) ? Math.round(frames.reduce((a, f) => a + f.length, 0) / 1024) : 0;
+        console.log('TMS VLM send:', { frames: frames ? frames.length : 0, approxKB: kb, maxEdge: VLM_FRAME_MAXEDGE, quality: VLM_FRAME_QUALITY });
+        try {
+            const eng = await ensureLiveness();
+            if (!alive()) return;
+            // 不可达 / 无客户端 / 无帧可送 → fail-open：照常打卡 + 提示核验不可用
+            if (!eng || !eng.ready || !frames || !frames.length) {
+                await doClock(emp, action, box);
+                if (alive()) { showLivenessResult('unavailable', null); await sleep(1400); }
+                return;
+            }
+            const v = await eng.verify(frames);
+            if (!alive()) return;
+            if (track) track.data.realProb = v.confidence;   // 供关窗后人脸框读数展示
+            console.log('TMS VLM verdict:', { real: v.real, confidence: Number(v.confidence.toFixed(2)), reason: v.reason });
+            if (v.real && v.confidence >= settings.livenessRealProb) {
+                await doClock(emp, action, box);            // 真人 → 打卡（撒花/语音/冷却）
+                if (alive()) { showLivenessResult('real', v); await sleep(1200); }
+            } else {
+                showLivenessResult('fake', v);               // 伪造 → 不打卡
+                await sleep(2500);
+                if (alive() && track) {                      // 重置该 track，让用户可重新对准重试
+                    track.data.phase = 'hold';
+                    track.data.startTs = performance.now();
+                    resetLiveness(track.data);
+                }
+            }
+        } catch (e) {
+            // 核验异常（超时/解析失败）→ fail-open：照常打卡，记录原因
+            console.warn('TMS VLM gate error, fail-open:', e.message);
+            if (alive()) {
+                await doClock(emp, action, box);
+                showLivenessResult('error', null);
+                await sleep(1400);
+            }
+        } finally {
+            // 只有发起核验的那次会话负责收尾，避免踩到已经开始的新一轮。
+            // 先关窗 + 放开 gating，再重开摄像头：getUserMedia 无超时，若放在 await 之后会把弹窗/gating 卡死成死机。
+            // 检测循环靠 readyState 自我节流，流回来前不会空跑，先放开 gating 是安全的。
+            if (alive()) {
+                closeLivenessModal();
+                gating = false;
+                try { await restartCameraStream(); }
+                catch (e) { console.warn('camera restart failed', e.message); toast(I18N.t('camera_error', { msg: e.message }), 'err'); }
+            }
+        }
+    }
+
+    /** 把活体阶段名映射到 i18n key（提示文案）。 */
+    function livenessPhaseKey(phase) {
+        switch (phase) {
+            case 'verifying': return 'liveness_verifying';
+            default: return null;
+        }
     }
 
     async function reloadMatcher() {
@@ -283,6 +433,7 @@
         // 清理已删除员工残留的冷却记录，避免随增删循环无限增长
         // （hold 状态现在挂在 track 上，随人脸离开自动淘汰，无需在此清理）
         for (const id of [...cooldown.keys()]) if (!empPhotos.has(id)) cooldown.delete(id);
+        for (const id of [...weakMatchWarnedAt.keys()]) if (!empPhotos.has(id)) weakMatchWarnedAt.delete(id);
         el.empCountPill.textContent = I18N.t('emp_count', { n: employees.length });
         return employees;
     }
@@ -290,19 +441,54 @@
     // ============================================================
     // 摄像头
     // ============================================================
-    async function startCamera(videoEl) {
-        if (stream) stopCamera();
-        stream = await navigator.mediaDevices.getUserMedia({
-            video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
-            audio: false
-        });
-        activeVideo = videoEl;
-        videoEl.srcObject = stream;
-        await new Promise((resolve, reject) => {
+    const CAM_CONSTRAINTS = {
+        video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
+        audio: false
+    };
+
+    /** 等视频元素拿到尺寸并开始播放（带超时，避免永久挂起）。 */
+    function waitVideoReady(videoEl) {
+        return new Promise((resolve, reject) => {
             const tid = setTimeout(() => reject(new Error('camera metadata timeout')), 5000);
             videoEl.onerror = (e) => { clearTimeout(tid); reject(e); };
             videoEl.onloadedmetadata = () => { clearTimeout(tid); videoEl.play(); resolve(); };
         });
+    }
+
+    async function startCamera(videoEl) {
+        if (stream) stopCamera();
+        stream = await navigator.mediaDevices.getUserMedia(CAM_CONSTRAINTS);
+        activeVideo = videoEl;
+        videoEl.srcObject = stream;
+        await waitVideoReady(videoEl);
+    }
+
+    // 仅关摄像头硬件（核验期间省资源 + 隐私：LED 灭，表示"在核验、不在看你"）。
+    // 与 stopCamera 区分：保留 activeVideo / loop / clockEpoch，核验完再 restart 续上同一会话。
+    function stopCameraStream() {
+        if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+        if (activeVideo) activeVideo.srcObject = null;
+    }
+
+    /** 核验后重开摄像头。注意 getUserMedia 是无超时 await：期间可能被 stopCamera 拆掉，故 await 后须复检。 */
+    async function restartCameraStream() {
+        if (!activeVideo) return false;
+        const s = await navigator.mediaDevices.getUserMedia(CAM_CONSTRAINTS);
+        if (!activeVideo) {                       // await 期间被切走/拆除 → 别让新流变孤儿（LED 长亮无主）
+            s.getTracks().forEach(t => t.stop());
+            return false;
+        }
+        stream = s;
+        activeVideo.srcObject = stream;
+        await waitVideoReady(activeVideo);
+        // 重开后清掉冻结的 track / 旧缓冲：旧 startTs 会在第一帧"秒触发"再核验，旧帧会喂错核验
+        tracker.clear();
+        lastClockDets = [];
+        lastClockKey = null;
+        lastPrimaryId = null;
+        frameRing = [];
+        lastFrameCapAt = 0;
+        return true;
     }
 
     function stopCamera() {
@@ -318,6 +504,14 @@
         particles = [];
         lastClockKey = null;
         lastPrimaryId = null;
+        // 清空滚动缓冲：上一场打卡的旧画面绝不能喂给下一场的活体核验
+        frameRing = [];
+        lastFrameCapAt = 0;
+        // 解除可能正卡在 AI 核验里的暂停 + 关弹窗；clockEpoch++ 让在途核验回调失效，
+        // 否则人离开后核验返回还会误打卡、且 gating 残留 true 会让下次进页检测永不恢复。
+        clockEpoch++;
+        gating = false;
+        closeLivenessModal();
     }
 
     // ============================================================
@@ -330,7 +524,8 @@
         let busy = false;
         let lastRun = 0;
 
-        // clock 模式检测更快（120ms）以提升真人检测和倒计时反馈；enroll 模式 200ms 省电
+        // clock 模式检测更快（120ms）以提升识别和倒计时反馈；enroll 模式 200ms 省电。
+        // VLM 核验在采集/请求阶段异步进行（全局单飞），不阻塞检测帧率。
         const interval = appMode === 'clock' ? 120 : 200;
 
         const loop = async (ts) => {
@@ -339,7 +534,9 @@
             // 逐帧重绘 clock 叠加层，让倒计时环平滑动画（即使检测被节流）
             if (ctx && appMode === 'clock') drawClockOverlay(ctx, overlay);
 
-            if (!busy && ts - lastRun > interval && activeVideo.readyState === activeVideo.HAVE_ENOUGH_DATA) {
+            // gating 期间（AI 核验弹窗）暂停人脸检测：纯等待结果，不空跑 detectAllFaces 省资源。
+            // 仍走 requestAnimationFrame 保持叠加层/粒子动画，结果回来即恢复。
+            if (!busy && !gating && ts - lastRun > interval && activeVideo.readyState === activeVideo.HAVE_ENOUGH_DATA) {
                 busy = true; lastRun = ts;
                 try {
                     if (appMode === 'clock') {
@@ -433,7 +630,6 @@
 
         const done = hs && hs.phase === 'done';
         const color = !match ? COLORS.unmatched                // 未识别：灰
-            : (hs && hs.phase === 'spoof') ? COLORS.warn
             : done ? COLORS.in
                 : (hs && hs.action === 'in' ? COLORS.in : COLORS.out);
 
@@ -459,9 +655,7 @@
         const cx = x + b.width + 4, cy = y + 18, rad = 16;
         let prog = 0, hint = '';
         if (hs.phase === 'done') { prog = 1; }
-        else if (hs.phase === 'checking') { prog = 0.35; hint = I18N.t('liveness_checking'); }
-        else if (hs.phase === 'blink') { prog = 0.65; hint = I18N.t('liveness_blink'); }
-        else if (hs.phase === 'spoof') { prog = 1; hint = I18N.t('liveness_failed'); }
+        else if (hs.phase === 'verifying') { prog = 1; hint = I18N.t('liveness_verifying'); }
         else {
             prog = Math.min(1, (performance.now() - hs.startTs) / HOLD_MS);
             hint = I18N.t(hs.action === 'in' ? 'clock_in_btn' : 'clock_out_btn');
@@ -471,7 +665,13 @@
         ctx.beginPath(); ctx.arc(cx, cy, rad, -Math.PI / 2, -Math.PI / 2 + prog * Math.PI * 2);
         ctx.strokeStyle = color; ctx.lineWidth = 4; ctx.lineCap = 'round'; ctx.stroke();
         if (hs.phase === 'done') {
-            ctx.fillStyle = color; ctx.font = '700 16px sans-serif'; ctx.fillText('✓', cx - 5, cy + 6);
+            // 矢量对勾（替代 emoji ✓ 字形），在倒计时环中心描边
+            ctx.strokeStyle = color; ctx.lineWidth = 3; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+            ctx.beginPath();
+            ctx.moveTo(cx - 6, cy);
+            ctx.lineTo(cx - 2, cy + 4);
+            ctx.lineTo(cx + 6, cy - 5);
+            ctx.stroke();
         }
 
         // 底部提示
@@ -483,6 +683,17 @@
             ctx.fillStyle = color;
             ctx.fillText(hint, x + 8, y + b.height + 23);
         }
+
+        // 读数：VLM 给出的真人置信度（核验完成后展示），低于阈值染警示色。
+        if (hs.realProb != null) {
+            const txt = 'live ' + hs.realProb.toFixed(2);
+            ctx.font = '600 13px -apple-system, sans-serif';
+            const rw = ctx.measureText(txt).width;
+            ctx.fillStyle = 'rgba(15,23,42,.85)';
+            ctx.fillRect(x, y - 30 - 22, rw + 14, 20);
+            ctx.fillStyle = (hs.realProb < settings.livenessRealProb) ? COLORS.warn : COLORS.in;
+            ctx.fillText(txt, x + 7, y - 30 - 7);
+        }
     }
 
     // ============================================================
@@ -490,6 +701,7 @@
     // ============================================================
     async function handleClockFrameMulti(dets) {
         const now = performance.now();
+        captureRingFrame(now);   // 持续填滚动缓冲（1fps），供识别通过那刻取「识别前」的帧送审
         // 1) 把本帧人脸框关联到稳定 track（result[i] ↔ dets[i]）
         const boxes = dets.map(d => d.detection.box);
         const tracks = tracker.update(boxes, now);
@@ -507,13 +719,19 @@
 
             if (result.status !== 'matched' || result.confidence < MIN_CLOCK_CONFIDENCE) {
                 track.data.empId = null;   // 这张脸暂不认识，清掉旧绑定
+                // 弱匹配告警按员工限流：同一员工每 WEAK_MATCH_WARN_MS 最多一条，避免逐帧刷屏
                 if (result.status === 'matched') {
-                    console.warn('TMS rejected weak face match:', {
-                        employeeId: result.user && result.user.id,
-                        confidence: Number(result.confidence.toFixed(1)),
-                        minConfidence: MIN_CLOCK_CONFIDENCE,
-                        distance: Number(result.distance.toFixed(4))
-                    });
+                    const eid = result.user && result.user.id;
+                    const lastWarn = weakMatchWarnedAt.get(eid) || 0;
+                    if (Date.now() - lastWarn > WEAK_MATCH_WARN_MS) {
+                        weakMatchWarnedAt.set(eid, Date.now());
+                        console.warn('TMS rejected weak face match:', {
+                            employeeId: eid,
+                            confidence: Number(result.confidence.toFixed(1)),
+                            minConfidence: MIN_CLOCK_CONFIDENCE,
+                            distance: Number(result.distance.toFixed(4))
+                        });
+                    }
                 }
                 drawList.push({ box, match: null, hold: null });
                 continue;
@@ -526,11 +744,9 @@
             if (d.empId !== emp.id) {
                 d.empId = emp.id; d.name = emp.name;
                 d.action = null; d.startTs = now;
-                d.antiSpoofPassed = !settings.liveness;
-                d.blinkPassed = !settings.liveness;
                 d.livePassed = !settings.liveness;
-                d.livenessStartTs = now;
-                d.liveScore = 0; d.phase = 'hold';
+                d.phase = 'hold';
+                resetLiveness(d);
             }
             d.confidence = result.confidence;
 
@@ -547,6 +763,7 @@
             // 这张脸已完成本轮打卡；冷却刚到期 → 重置状态，下帧开启新一轮
             if (d.phase === 'done') {
                 d.phase = 'hold'; d.action = null; d.livePassed = false; d.startTs = now;
+                resetLiveness(d);
                 continue;
             }
 
@@ -557,60 +774,38 @@
                 d.startTs = now;
             }
 
-            if (settings.liveness) {
-                updateBlinkChallenge(d, det.landmarks);
-                if (!d.livePassed) {
-                    if (!d.livenessStartTs) d.livenessStartTs = now;
-                    if (now - d.livenessStartTs > LIVENESS_CHALLENGE_TIMEOUT_MS) {
-                        d.phase = 'spoof';
-                        d.antiSpoofPassed = false;
-                        d.blinkPassed = false;
-                        d.livenessStartTs = now;
-                        continue;
-                    }
-                    if (!d.antiSpoofPassed) {
-                        d.phase = 'checking';
-                        try {
-                            const live = await predictLiveness(activeVideo, box);
-                            d.liveScore = live.live;
-                            d.antiSpoofPassed = live.passed;
-                            d.phase = live.passed ? 'checking' : 'spoof';
-                            d.startTs = now;
-                        } catch (e) {
-                            d.phase = 'spoof';
-                            toast(I18N.t('liveness_model_fail', { msg: e.message }), 'err');
-                        }
-                    }
-                    if (d.antiSpoofPassed && !d.blinkPassed) {
-                        d.phase = 'blink';
-                        d.startTs = now;
-                    }
-                    d.livePassed = d.antiSpoofPassed && d.blinkPassed;
-                    if (d.livePassed) {
-                        d.phase = 'hold';
-                        d.livenessStartTs = null;
-                    }
-                    if (!d.livePassed) continue;
-                }
-            } else {
-                d.livePassed = true;
-            }
+            // 倒计时(1,2,3 保持不动)期间不被活体拦；滚动缓冲(captureRingFrame)同时持续攒帧。
+            // 活体核验改到「倒计时满」之后，作为打卡前的最后一道闸（弹窗 + 暂停检测，见下）。
+            d.livePassed = true;
 
-            // 已通过真人检测 + 保持足够时长 → 自动打卡
-            if (d.livePassed && now - d.startTs >= HOLD_MS) {
-                d.phase = 'done';
-                // 同帧/冷却双重去重：同一员工被两张脸同时拍到时只写一次
+            // 保持足够时长 → 该打卡了
+            if (now - d.startTs >= HOLD_MS) {
+                // 同帧/冷却双重去重：同一员工被两张脸同时拍到时只触发一次
                 const c = cooldown.get(emp.id);
                 const inCooldown = c && Date.now() - c < settings.clockCooldownMs;
-                if (!inCooldown && !clockedThisFrame.has(emp.id)) {
+                if (inCooldown || clockedThisFrame.has(emp.id)) { d.phase = 'done'; continue; }
+
+                if (settings.liveness) {
+                    // 已有一次核验在进行（同帧另一张脸刚触发）→ 本帧此脸不再触发
+                    if (gating) { d.phase = 'verifying'; continue; }
+                    // 送审必须满 VLM_FRAME_COUNT 张真帧（≈ t-3/-2/-1 秒）。缓冲还没攒够（刚开/重开摄像头、
+                    // 快速走近）→ 不触发、不打卡，继续保持并攒帧，下帧再判，绝不送少于 N 张。
+                    const send = recentRingFrames(now);
+                    if (!send) { d.phase = 'verifying'; continue; }
                     clockedThisFrame.add(emp.id);
-                    if (await doClock(emp, d.action, box)) {
-                        justClocked = matchedFaces[matchedFaces.length - 1];
-                    } else {
-                        // 写库失败 → 回退该 track，下帧重新倒计时；保留 clockedThisFrame 锁，
-                        // 防止同帧第二张同员工脸再次触发写入（两次失败写入没有意义）。
-                        d.phase = 'hold'; d.startTs = now;
-                    }
+                    d.phase = 'verifying';
+                    startLivenessGate(emp, d.action, send, box, track);   // fire-and-forget；gating 接管
+                    continue;
+                }
+
+                // 无活体：直接打卡
+                d.phase = 'done';
+                clockedThisFrame.add(emp.id);
+                if (await doClock(emp, d.action, box)) {
+                    justClocked = matchedFaces[matchedFaces.length - 1];
+                } else {
+                    // 写库失败 → 回退该 track，下帧重新倒计时
+                    d.phase = 'hold'; d.startTs = now;
                 }
             }
         }
@@ -630,7 +825,7 @@
         if (target) {
             lastPrimaryId = target.emp.id;
             const d = target.track.data;
-            const phase = d.phase === 'done' ? 'done' : (d.phase === 'checking' || d.phase === 'blink' || d.phase === 'spoof' ? d.phase : 'holding');
+            const phase = d.phase === 'done' ? 'done' : (d.phase === 'verifying' ? 'verifying' : 'holding');
             renderClockStatus(target.emp, target.confidence, phase, d);
         } else if (dets.length) {
             lastPrimaryId = null;
@@ -653,8 +848,7 @@
 
         let sub;
         if (phase === 'done') sub = I18N.t('clock_recorded', { c: confidence.toFixed(0) });
-        else if (phase === 'checking') sub = I18N.t('liveness_checking');
-        else if (phase === 'spoof') sub = I18N.t('liveness_failed');
+        else if (livenessPhaseKey(phase)) sub = I18N.t(livenessPhaseKey(phase));
         else sub = I18N.t(action === 'in' ? 'hold_to_in' : 'hold_to_out');
 
         el.clockCard.innerHTML = '';
@@ -662,7 +856,10 @@
         if (phase === 'done') {
             const badge = document.createElement('div');
             badge.className = 'clock-badge ok';
-            badge.textContent = I18N.t('clock_done');
+            badge.innerHTML = icon('check');
+            const bt = document.createElement('span');
+            bt.textContent = I18N.t('clock_done');
+            badge.appendChild(bt);
             el.clockCard.appendChild(badge);
         }
         el.clockCard.className = 'clock-card show';
@@ -732,9 +929,12 @@
     }
 
     // ---------- 声音 / 语音 ----------
+    // soundEnabled 是总控：提示音(beep) + 语音(speak) 一起受它约束。
+    // speakEnabled 是子项：仅控制语音播报，且必须 soundEnabled 才生效。
     let audioCtx = null;
     function beep(freq) {
         try {
+            if (!settings.soundEnabled) return;
             audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
             const o = audioCtx.createOscillator(), g = audioCtx.createGain();
             o.frequency.value = freq; o.type = 'sine';
@@ -744,15 +944,55 @@
             o.start(); o.stop(audioCtx.currentTime + 0.25);
         } catch (e) {}
     }
+
+    // 按 UI 语言读/写选定的 voiceURI。兼容旧版的扁平字符串（迁移期：旧值同时套用到两种语言）。
+    function voiceURIFor(lang) {
+        const v = settings.speakVoiceURI;
+        if (v && typeof v === 'object') return v[lang] || '';
+        return typeof v === 'string' ? v : '';
+    }
+    function setVoiceURIFor(lang, uri) {
+        const cur = settings.speakVoiceURI;
+        const next = (cur && typeof cur === 'object') ? { ...cur } : { en: '', zh: '' };
+        next[lang] = uri;
+        settings = tmsDB.saveSettings({ speakVoiceURI: next });
+    }
+
     function speak(text) {
         try {
             if (!('speechSynthesis' in window)) return;
+            if (!settings.soundEnabled || !settings.speakEnabled) return;
             const u = new SpeechSynthesisUtterance(text);
-            u.lang = I18N.lang === 'zh' ? 'zh-CN' : 'en-US';
+            const saved = voiceURIFor(I18N.lang);
+            const voice = saved ? speechSynthesis.getVoices().find(v => v.voiceURI === saved) : null;
+            if (voice) {
+                u.voice = voice;
+                u.lang = voice.lang;
+            } else {
+                // 没选/选过的语音在本设备不存在 → 回退浏览器默认，按当前 UI 语言对齐
+                u.lang = I18N.lang === 'zh' ? 'zh-CN' : 'en-US';
+            }
             u.rate = 1.0;
             speechSynthesis.cancel();
             speechSynthesis.speak(u);
         } catch (e) {}
+    }
+
+    // 下拉只列当前 UI 语言的语音（避免中/英混用导致发音不匹配）；
+    // 该语言无可用语音时回退列出全部，避免空下拉。选中项取当前语言已存的 voiceURI。
+    function populateVoiceSelect() {
+        if (!el.voiceSelect || !('speechSynthesis' in window)) return;
+        const all = speechSynthesis.getVoices();
+        if (!all.length) return;
+        const prefix = I18N.lang === 'zh' ? 'zh' : 'en';
+        let voices = all.filter(v => (v.lang || '').toLowerCase().startsWith(prefix));
+        if (!voices.length) voices = all;
+        const saved = voiceURIFor(I18N.lang);
+        el.voiceSelect.innerHTML =
+            `<option value="">${I18N.t('voice_default')}</option>` +
+            voices.map(v =>
+                `<option value="${v.voiceURI}"${v.voiceURI === saved ? ' selected' : ''}>${v.name} (${v.lang})</option>`
+            ).join('');
     }
 
     function showClockIdle() {
@@ -811,6 +1051,7 @@
                 descriptors: data.descriptors,
                 meanDescriptor: data.meanDescriptor,
                 photo,
+                capturedFrames: frames.slice(0, settings.enrollCaptures),
                 enrolledAt: Date.now()
             });
             await reloadMatcher();
@@ -864,6 +1105,11 @@
             row.className = 'emp-row';
 
             const av = buildAvatar((emp.name || '?').charAt(0).toUpperCase(), '', emp.photo, 'emp-avatar');
+            if (emp.photo) {
+                av.classList.add('has-photo');
+                av.title = I18N.t('view_registered_faces');
+                av.onclick = () => openFacePreview(emp);
+            }
 
             const info = document.createElement('div');
             info.className = 'emp-info';
@@ -876,20 +1122,116 @@
             });
             info.append(n, m);
 
+            const actions = document.createElement('div');
+            actions.className = 'emp-actions';
+
+            const preview = document.createElement('button');
+            preview.className = 'emp-action';
+            preview.type = 'button';
+            preview.innerHTML = icon('eye');
+            preview.title = I18N.t('view_registered_faces');
+            preview.setAttribute('aria-label', I18N.t('view_registered_faces'));
+            preview.onclick = () => openFacePreview(emp);
+
+            const edit = document.createElement('button');
+            edit.className = 'emp-action';
+            edit.type = 'button';
+            edit.innerHTML = icon('edit');
+            edit.title = I18N.t('edit_staff');
+            edit.setAttribute('aria-label', I18N.t('edit_staff'));
+            edit.onclick = () => editEmployee(emp);
+
             const del = document.createElement('button');
-            del.className = 'emp-del';
-            del.textContent = '🗑';
+            del.className = 'emp-action danger';
+            del.type = 'button';
+            del.innerHTML = icon('trash');
+            del.title = I18N.t('delete_staff');
+            del.setAttribute('aria-label', I18N.t('delete_staff'));
             del.onclick = async () => {
-                if (!confirm(I18N.t('emp_delete_confirm', { name: emp.name }))) return;
+                const ok = await TmsModal.confirm({
+                    title: I18N.t('delete_staff'),
+                    body: I18N.t('emp_delete_confirm', { name: emp.name }),
+                    okLabel: I18N.t('delete_staff'),
+                    danger: true
+                });
+                if (!ok) return;
                 await tmsDB.deleteEmployee(emp.id);
                 await reloadMatcher();
                 await renderEmployees();
                 toast(I18N.t('deleted'), 'ok');
             };
+            actions.append(preview, edit, del);
 
-            row.append(av, info, del);
+            row.append(av, info, actions);
             el.empList.appendChild(row);
         });
+    }
+
+    function faceFrames(emp) {
+        const frames = Array.isArray(emp.capturedFrames) ? emp.capturedFrames.filter(Boolean) : [];
+        if (frames.length) return frames;
+        return emp.photo ? [emp.photo] : [];
+    }
+
+    async function openFacePreview(emp) {
+        const frames = faceFrames(emp);
+        if (!frames.length) { toast(I18N.t('no_photo'), 'err'); return; }
+        const body = document.createElement('div');
+        const note = document.createElement('p');
+        note.className = 'modal-note';
+        note.textContent = I18N.t('face_preview_note', { n: frames.length });
+        const grid = document.createElement('div');
+        grid.className = 'capture-grid';
+        frames.forEach((src, index) => {
+            const tile = document.createElement('figure');
+            tile.className = 'capture-tile';
+            const img = document.createElement('img');
+            img.src = src;
+            img.alt = I18N.t('face_sample_alt', { n: index + 1 });
+            const cap = document.createElement('figcaption');
+            cap.textContent = I18N.t('face_sample_label', { n: index + 1 });
+            tile.append(img, cap);
+            grid.appendChild(tile);
+        });
+        body.append(note, grid);
+        await TmsModal.alert({
+            title: I18N.t('faces_title', { name: emp.name || emp.id }),
+            body,
+            wide: true
+        });
+    }
+
+    async function editEmployee(emp) {
+        const values = await TmsModal.form({
+            title: I18N.t('edit_staff'),
+            submitLabel: I18N.t('save'),
+            fields: [
+                { name: 'name', label: I18N.t('label_name'), value: emp.name || '', placeholder: I18N.t('ph_name'), required: true },
+                { name: 'department', label: I18N.t('label_dept'), value: emp.department || '', placeholder: I18N.t('ph_dept') }
+            ],
+            validate: (values) => {
+                if (!values.name) {
+                    toast(I18N.t('need_name'), 'err');
+                    return false;
+                }
+                return true;
+            }
+        });
+        if (!values) return;
+        const name = values.name.trim();
+        const department = values.department.trim();
+        if (name === (emp.name || '') && department === (emp.department || '')) return;
+        try {
+            await tmsDB.updateEmployeeProfile(emp.id, { name, department });
+            await reloadMatcher();
+            await renderEmployees();
+            lastClockKey = null;
+            if (document.getElementById('panel-records').classList.contains('show')) await renderRecords();
+            if (document.getElementById('panel-dashboard').classList.contains('show')) await renderDashboard();
+            toast(I18N.t('staff_updated', { name }), 'ok');
+        } catch (e) {
+            toast(I18N.t('staff_update_fail', { msg: e.message }), 'err');
+        }
     }
 
     // ============================================================
@@ -911,8 +1253,16 @@
             ];
             cells.forEach((txt, i) => {
                 const td = document.createElement('td');
-                td.textContent = txt;
-                if (i === 1) td.className = r.type === 'in' ? 'cell-in' : 'cell-out';
+                if (i === 1) {
+                    // 类型列：状态圆点（颜色随 cell-in/cell-out 的 currentColor）+ 文本
+                    td.className = r.type === 'in' ? 'cell-in' : 'cell-out';
+                    td.innerHTML = icon('dot') + ' ';
+                    const span = document.createElement('span');
+                    span.textContent = txt;
+                    td.appendChild(span);
+                } else {
+                    td.textContent = txt;
+                }
                 tr.appendChild(td);
             });
             // 状态徽章
@@ -1003,6 +1353,7 @@
                 await startCamera(el.clockVideo);
                 el.clockOverlay.width = el.clockVideo.videoWidth;
                 el.clockOverlay.height = el.clockVideo.videoHeight;
+                if (settings.liveness) ensureLiveness();   // 非阻塞：后台加载混合活体引擎
                 startLoop(el.clockOverlay);
             } catch (e) {
                 el.clockHint.textContent = I18N.t('camera_error', { msg: e.message });
@@ -1060,7 +1411,10 @@
             const n = document.createElement('div'); n.className = 'emp-name'; n.textContent = r.employeeName;
             info.appendChild(n);
             const time = document.createElement('div'); time.className = 'whos-in-time';
-            time.textContent = '🟢 ' + new Date(r.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            time.innerHTML = icon('dot') + ' ';   // 在岗状态圆点（whos-in-time 已是绿色）
+            const tt = document.createElement('span');
+            tt.textContent = new Date(r.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            time.appendChild(tt);
             row.append(av, info, time);
             el.whosInList.appendChild(row);
         });
@@ -1098,6 +1452,18 @@
         el.workEndInput.value = settings.workEnd;
         el.graceInput.value = settings.graceMin;
         if (el.livenessToggle) el.livenessToggle.checked = !!settings.liveness;
+        if (el.realProbInput) {
+            el.realProbInput.value = settings.livenessRealProb;
+            el.realProbLabel.textContent = I18N.t('realprob_label', { v: Number(settings.livenessRealProb).toFixed(2) });
+        }
+        if (el.vlmEndpointInput) el.vlmEndpointInput.value = settings.vlmEndpoint || '';
+        if (el.vlmModelInput) el.vlmModelInput.value = settings.vlmModel || '';
+        if (el.vlmFields) el.vlmFields.style.display = settings.liveness ? 'block' : 'none';
+        if (el.soundToggle) el.soundToggle.checked = !!settings.soundEnabled;
+        if (el.speakToggle) el.speakToggle.checked = !!settings.speakEnabled;
+        if (el.soundFields) el.soundFields.style.display = settings.soundEnabled ? 'block' : 'none';
+        if (el.voiceFields) el.voiceFields.style.display = (settings.soundEnabled && settings.speakEnabled) ? 'block' : 'none';
+        populateVoiceSelect();
     }
 
     // ============================================================
@@ -1137,11 +1503,64 @@
                 tracker.clear();
                 lastClockDets = [];
                 lastClockKey = null;
-                if (settings.liveness) {
-                    initAntiSpoof().catch(e => toast(I18N.t('liveness_model_fail', { msg: e.message }), 'err'));
-                }
+                if (el.vlmFields) el.vlmFields.style.display = settings.liveness ? 'block' : 'none';
+                // 开启时立刻做健康检查连 LM Studio（首帧再等会卡顿）；关闭则无需动作
+                if (settings.liveness) ensureLiveness();
             });
         }
+        if (el.realProbInput) {
+            el.realProbInput.addEventListener('input', () => {
+                const v = Math.min(0.9, Math.max(0.3, parseFloat(el.realProbInput.value)));
+                el.realProbInput.value = v;
+                el.realProbLabel.textContent = I18N.t('realprob_label', { v: v.toFixed(2) });
+                settings = tmsDB.saveSettings({ livenessRealProb: v });
+                if (liveness) liveness.threshold = v;   // 客户端已建则即时生效
+            });
+        }
+        // 改 LM Studio 地址 / 模型 → 存设置并丢弃旧客户端，下次开启活体时按新值重建
+        function resetVlmClient() { liveness = null; livenessInitPromise = null; }
+        if (el.vlmEndpointInput) {
+            el.vlmEndpointInput.addEventListener('change', () => {
+                settings = tmsDB.saveSettings({ vlmEndpoint: el.vlmEndpointInput.value.trim() || 'http://127.0.0.1:6501/v1' });
+                resetVlmClient();
+                if (settings.liveness) ensureLiveness();
+            });
+        }
+        if (el.vlmModelInput) {
+            el.vlmModelInput.addEventListener('change', () => {
+                settings = tmsDB.saveSettings({ vlmModel: el.vlmModelInput.value.trim() || 'minicpm-v-4.6' });
+                resetVlmClient();
+                if (settings.liveness) ensureLiveness();
+            });
+        }
+        if (el.soundToggle) {
+            el.soundToggle.addEventListener('change', () => {
+                settings = tmsDB.saveSettings({ soundEnabled: el.soundToggle.checked });
+                if (el.soundFields) el.soundFields.style.display = settings.soundEnabled ? 'block' : 'none';
+                if (el.voiceFields) el.voiceFields.style.display = (settings.soundEnabled && settings.speakEnabled) ? 'block' : 'none';
+            });
+        }
+        if (el.speakToggle) {
+            el.speakToggle.addEventListener('change', () => {
+                settings = tmsDB.saveSettings({ speakEnabled: el.speakToggle.checked });
+                if (el.voiceFields) el.voiceFields.style.display = (settings.soundEnabled && settings.speakEnabled) ? 'block' : 'none';
+            });
+        }
+        if (el.voiceSelect) {
+            el.voiceSelect.addEventListener('change', () => {
+                setVoiceURIFor(I18N.lang, el.voiceSelect.value);   // 按当前 UI 语言分槽保存
+            });
+        }
+        if (el.voiceTestBtn) {
+            el.voiceTestBtn.addEventListener('click', () => {
+                speak(I18N.t('voice_in', { name: 'Test' }));
+            });
+        }
+        // 异步加载（Chrome 首次 getVoices() 为空，voices loaded 后触发）
+        if ('speechSynthesis' in window) {
+            speechSynthesis.addEventListener('voiceschanged', populateVoiceSelect);
+        }
+
         el.empName.addEventListener('keydown', (e) => { if (e.key === 'Enter') openEnroll(); });
 
         // 页面隐藏时释放摄像头（移动端切后台）
