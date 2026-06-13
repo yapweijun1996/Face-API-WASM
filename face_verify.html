@@ -839,12 +839,14 @@
 
         // ========== Face API ==========
         async function initFaceApi() {
+            let openMark = null; // { start, end, name } — tracks which phase is mid-flight
             try {
                 showSpinner();
 
                 console.log('🚀 Starting Face API initialization...');
                 const initStart = performance.now();
                 performance.mark('face-init:backend-start');
+                openMark = { start: 'face-init:backend-start', end: 'face-init:backend-end', name: 'face-init: Backend setup' };
 
                 // Setup WASM backend
                 const backendStart = performance.now();
@@ -866,6 +868,7 @@
 
                 const backendEnd = performance.now();
                 performance.mark('face-init:backend-end');
+                openMark = null;
                 performance.measure('face-init: Backend setup', {
                     start: 'face-init:backend-start', end: 'face-init:backend-end',
                     detail: { backend: backendUsed, model: CONFIG.detection.detectorModel }
@@ -875,6 +878,7 @@
                 // Load models based on selected detector
                 setStatus('Loading models...');
                 performance.mark('face-init:models-start');
+                openMark = { start: 'face-init:models-start', end: 'face-init:models-end', name: 'face-init: Model loading' };
                 const modelsStart = performance.now();
                 const detectorModel = CONFIG.detection.detectorModel;
                 console.log(`🔧 Using detector model: ${detectorModel}`);
@@ -897,6 +901,7 @@
 
                 const modelsEnd = performance.now();
                 performance.mark('face-init:models-end');
+                openMark = null;
                 performance.measure('face-init: Model loading', {
                     start: 'face-init:models-start', end: 'face-init:models-end',
                     detail: { model: detectorModel, backend: backendUsed }
@@ -906,10 +911,12 @@
                 // Warm-up
                 setStatus('Warming up...');
                 performance.mark('face-init:warmup-start');
+                openMark = { start: 'face-init:warmup-start', end: 'face-init:warmup-end', name: 'face-init: Warm-up' };
                 const warmupStart = performance.now();
                 await warmupOnce();
                 const warmupEnd = performance.now();
                 performance.mark('face-init:warmup-end');
+                openMark = null;
                 performance.measure('face-init: Warm-up', {
                     start: 'face-init:warmup-start', end: 'face-init:warmup-end',
                     detail: { model: detectorModel, backend: backendUsed }
@@ -945,6 +952,15 @@
                 selectSource('indexeddb');
 
             } catch (error) {
+                if (openMark) {
+                    performance.mark(openMark.end);
+                    try {
+                        performance.measure(openMark.name, {
+                            start: openMark.start, end: openMark.end,
+                            detail: { count: -1 }
+                        });
+                    } catch (_) {}
+                }
                 console.error('❌ Init error:', error);
                 hideSpinner();
                 setStatus('Error: ' + error.message, 'error');

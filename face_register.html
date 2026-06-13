@@ -789,7 +789,7 @@
         // ========== Core Functions ==========
 
         async function initFaceApi() {
-            let storageMarkOpen = false;
+            let openMark = null; // { start, end, name } — tracks which phase is mid-flight
             try {
                 showSpinner();
 
@@ -799,6 +799,7 @@
                 // ===== Step 1: Backend Setup =====
                 timing.backendStart = performance.now();
                 performance.mark('face-init:backend-start');
+                openMark = { start: 'face-init:backend-start', end: 'face-init:backend-end', name: 'face-init: Backend setup' };
                 setStatus('Setting up WASM backend...');
 
                 const wasmPath = './js/lib/';
@@ -817,6 +818,7 @@
 
                 timing.backendEnd = performance.now();
                 performance.mark('face-init:backend-end');
+                openMark = null;
                 performance.measure('face-init: Backend setup', {
                     start: 'face-init:backend-start', end: 'face-init:backend-end',
                     detail: { backend: backendUsed, model: CONFIG.detection.detectorModel }
@@ -826,6 +828,7 @@
                 // ===== Step 2: Load Models =====
                 timing.modelsStart = performance.now();
                 performance.mark('face-init:models-start');
+                openMark = { start: 'face-init:models-start', end: 'face-init:models-end', name: 'face-init: Model loading' };
                 setStatus('Loading face detection models...');
 
                 const detectorModel = CONFIG.detection.detectorModel;
@@ -847,6 +850,7 @@
 
                 timing.modelsEnd = performance.now();
                 performance.mark('face-init:models-end');
+                openMark = null;
                 performance.measure('face-init: Model loading', {
                     start: 'face-init:models-start', end: 'face-init:models-end',
                     detail: { model: detectorModel, backend: backendUsed }
@@ -856,12 +860,14 @@
                 // ===== Step 3: Warm-up =====
                 timing.warmupStart = performance.now();
                 performance.mark('face-init:warmup-start');
+                openMark = { start: 'face-init:warmup-start', end: 'face-init:warmup-end', name: 'face-init: Warm-up' };
                 setStatus('Warming up...');
 
                 await warmupOnce();
 
                 timing.warmupEnd = performance.now();
                 performance.mark('face-init:warmup-end');
+                openMark = null;
                 performance.measure('face-init: Warm-up', {
                     start: 'face-init:warmup-start', end: 'face-init:warmup-end',
                     detail: { model: detectorModel, backend: backendUsed }
@@ -870,7 +876,7 @@
 
                 // ===== Step 4: Initialize Registration Manager =====
                 performance.mark('face-init:storage-start');
-                storageMarkOpen = true;
+                openMark = { start: 'face-init:storage-start', end: 'face-init:storage-end', name: 'face-init: Storage init' };
                 await faceStorage.init();
                 registrationManager = new FaceRegistrationManager({
                     maxCaptures: CONFIG.registration.maxCaptures,
@@ -881,7 +887,7 @@
                 });
                 await registrationManager.init(faceStorage);
                 performance.mark('face-init:storage-end');
-                storageMarkOpen = false;
+                openMark = null;
                 performance.measure('face-init: Storage init', {
                     start: 'face-init:storage-start', end: 'face-init:storage-end',
                     detail: { count: 0 }
@@ -914,11 +920,11 @@
                 requestPersistentStorage();
 
             } catch (error) {
-                if (storageMarkOpen) {
-                    performance.mark('face-init:storage-end');
+                if (openMark) {
+                    performance.mark(openMark.end);
                     try {
-                        performance.measure('face-init: Storage init', {
-                            start: 'face-init:storage-start', end: 'face-init:storage-end',
+                        performance.measure(openMark.name, {
+                            start: openMark.start, end: openMark.end,
                             detail: { count: -1 }
                         });
                     } catch (_) {}
