@@ -1,0 +1,15 @@
+{
+  "name": "face-api-wasm",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "test": "node --test js/core/core.test.js js/core/FaceStorage.test.js",
+    "test:idb": "node --test js/core/FaceStorage.idb.test.js",
+    "test:all": "node --test js/core/core.test.js js/core/FaceStorage.test.js js/core/FaceStorage.idb.test.js",
+    "lint": "eslint js/core/ --max-warnings 0"
+  },
+  "devDependencies": {
+    "eslint": "^8.57.1",
+    "fake-indexeddb": "^6.0.0"
+  }
+}

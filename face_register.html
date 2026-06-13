@@ -410,6 +410,42 @@
         .back-link:hover {
             color: var(--text-primary);
         }
+
+        /* 存储配额警告条 */
+        #quotaWarning {
+            width: 100%;
+            max-width: 400px;
+            background: rgba(255, 165, 2, 0.12);
+            border: 1px solid var(--warning-yellow);
+            border-radius: 10px;
+            padding: 10px 14px;
+            font-size: 13px;
+            color: var(--warning-yellow);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        #quotaWarning.hidden {
+            display: none;
+        }
+
+        #quotaWarning .quota-dismiss {
+            margin-left: auto;
+            background: none;
+            border: none;
+            color: inherit;
+            font-size: 18px;
+            line-height: 1;
+            padding: 0 4px;
+            cursor: pointer;
+            opacity: 0.7;
+            flex-shrink: 0;
+        }
+
+        #quotaWarning .quota-dismiss:hover {
+            opacity: 1;
+        }
     </style>
 
     <!-- 1. TensorFlow.js -->
@@ -428,6 +464,12 @@
 
 <body>
     <h2>📝 Face Registration</h2>
+
+    <!-- 存储配额警告（低于 50 MB 剩余时显示） -->
+    <div id="quotaWarning" class="hidden">
+        ⚠️ <span id="quotaWarningText">Storage space is low.</span>
+        <button class="quota-dismiss" onclick="document.getElementById('quotaWarning').classList.add('hidden')" aria-label="Dismiss">×</button>
+    </div>
 
     <!-- 用户信息表单 -->
     <div id="formSection" class="form-section">
@@ -650,6 +692,57 @@
             errorModal.classList.remove('visible');
         }
 
+        async function checkStorageQuota() {
+            if (!navigator.storage || !navigator.storage.estimate) return;
+            try {
+                const { quota, usage } = await navigator.storage.estimate();
+                const remaining = quota - usage;
+                const WARN_BYTES = 50 * 1024 * 1024; // 50 MB
+                if (remaining < WARN_BYTES) {
+                    const mb = (remaining / 1024 / 1024).toFixed(1);
+                    document.getElementById('quotaWarningText').textContent =
+                        `Only ${mb} MB of storage remaining. Registration may fail. Please free up browser storage.`;
+                    document.getElementById('quotaWarning').classList.remove('hidden');
+                }
+            } catch (_) { /* non-critical */ }
+        }
+
+        // 申请「持久存储」权限：浏览器在空间紧张时优先清理非持久 IDB 数据，
+        // 获得持久权限后注册数据不会被自动清理。
+        // 只在 Chromium 内核支持此 API，Safari/Firefox 表现不同，失败静默。
+        async function requestPersistentStorage() {
+            if (!navigator.storage || !navigator.storage.persist) return;
+            try {
+                const granted = await navigator.storage.persist();
+                if (granted) {
+                    console.log('Persistent storage granted — face data will not be auto-evicted.');
+                } else {
+                    console.log('Persistent storage not granted — face data may be evicted under storage pressure.');
+                    const el = document.getElementById('quotaWarning');
+                    const txt = document.getElementById('quotaWarningText');
+                    // 只在配额警告未触发时才更新文字（避免覆盖更严重的"空间不足"信息）
+                    if (el.classList.contains('hidden')) {
+                        txt.textContent = 'Face data is not marked as persistent and may be cleared by the browser.';
+                        el.classList.remove('hidden');
+                    }
+                }
+            } catch (_) { /* non-critical */ }
+        }
+
+        function friendlyStorageError(err) {
+            const msg = (err && err.message) || String(err);
+            if (/QuotaExceeded|quota/i.test(msg)) {
+                return 'Storage is full. Please clear some browser storage space and try again.';
+            }
+            if (/blocked/i.test(msg)) {
+                return 'Database is blocked by another tab. Please close other tabs and refresh.';
+            }
+            if (/aborted/i.test(msg)) {
+                return 'Storage operation was interrupted. Please refresh and try again.';
+            }
+            return 'Storage error: ' + msg;
+        }
+
         function updateProgress(progress) {
             progressFill.style.width = `${progress.percentage}%`;
             progressText.textContent = `${progress.current} / ${progress.total} captures`;
@@ -759,7 +852,7 @@
                     showFeedback(`Captured ${data.index}/${CONFIG.registration.maxCaptures}`, 'success', 800);
                 };
                 registrationManager.onComplete = onRegistrationComplete;
-                registrationManager.onError = (err) => showError(err.message);
+                registrationManager.onError = (err) => showError(friendlyStorageError(err));
 
                 // ===== Done! =====
                 timing.totalReady = performance.now();
@@ -768,11 +861,14 @@
                 hideSpinner();
                 setStatus('Ready! Enter your info and start.', 'success');
                 startRegBtn.disabled = false;
+                checkStorageQuota();
+                requestPersistentStorage();
 
             } catch (error) {
                 console.error('❌ Init error:', error);
                 hideSpinner();
-                setStatus('Error: ' + error.message, 'error');
+                setStatus('Initialization failed', 'error');
+                showError(friendlyStorageError(error));
             }
         }
 

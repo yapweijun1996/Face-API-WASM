@@ -148,10 +148,24 @@
 
     /* ---------- 记录 ---------- */
     .summary { background: var(--bg2); border-radius: 12px; padding: 12px 14px; font-size: 13px; color: var(--text); margin-bottom: 12px; }
+    .records-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: end; margin-bottom: 12px; }
+    .records-toolbar .field { margin-bottom: 0; }
+    .records-page-size { min-width: 116px; }
+    .field select {
+        width: 100%; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--line);
+        background: #0b1120; color: var(--text); font-size: 15px; color-scheme: dark;
+    }
     .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
     table { width: 100%; border-collapse: collapse; font-size: 14px; }
     th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
     th { color: var(--muted); font-weight: 600; font-size: 12px; }
+    .table-sort { display: inline-flex; align-items: center; gap: 5px; background: transparent; border: 0; color: inherit; font: inherit; padding: 0; cursor: pointer; }
+    .table-sort::after { content: '↕'; font-size: 10px; color: var(--muted); }
+    .table-sort.asc::after { content: '↑'; color: var(--accent); }
+    .table-sort.desc::after { content: '↓'; color: var(--accent); }
+    .records-pager { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding-top: 12px; }
+    .records-pager .btn { width: auto; min-width: 92px; padding: 10px 12px; }
+    .records-page-info { color: var(--muted); font-size: 13px; text-align: center; flex: 1; }
     .cell-in { color: var(--in); font-weight: 600; }
     .cell-out { color: var(--out); font-weight: 600; }
     .cell-muted { color: var(--muted); }
@@ -159,6 +173,18 @@
     .status-badge.late { background: rgba(244,63,94,.18); color: #fb7185; }
     .status-badge.early { background: rgba(255,165,2,.18); color: #ffb454; }
     .status-badge.overtime { background: rgba(34,211,238,.18); color: var(--accent); }
+    /* 核验列：图标 + 文字徽章 */
+    .verify-cell { white-space: nowrap; }
+    .verify-cell .vbadge { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600; }
+    .verify-cell .ico { width: 15px; height: 15px; }
+    .verify-pending .vbadge { color: var(--muted); }
+    .verify-real .vbadge { color: var(--in); }
+    .verify-reviewed .vbadge { color: var(--in); }
+    .verify-suspect .vbadge { color: #fbbf24; }
+    .verify-error .vbadge { color: var(--out); }
+    .verify-none { color: var(--muted); }
+    .verify-suspect, .verify-reviewed { cursor: pointer; }
+    .verify-progress { font-size: 13px; color: var(--muted); margin-bottom: 10px; text-align: center; }
     .sched-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
     .sched-grid .field:last-child { grid-column: 1 / -1; }
     .field input[type="time"], .field input[type="number"] { color-scheme: dark; }
@@ -322,6 +348,9 @@
         <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M10 11v6M14 11v6"/></symbol>
         <symbol id="i-eye" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></symbol>
         <symbol id="i-dot" viewBox="0 0 24 24"><circle cx="12" cy="12" r="7"/></symbol>
+        <symbol id="i-hourglass" viewBox="0 0 24 24"><path d="M6 2h12M6 22h12M6 2c0 4 3 6 6 6s6-2 6-6M6 22c0-4 3-6 6-6s6 2 6 6"/></symbol>
+        <symbol id="i-user-check" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M16 11l2 2 4-4"/></symbol>
+        <symbol id="i-scan" viewBox="0 0 24 24"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2M3 12h18"/></symbol>
     </defs>
 </svg>
 
@@ -407,15 +436,46 @@
         <div class="card">
             <h2><svg class="ico"><use href="#i-clipboard"/></svg><span data-i18n="records_title">考勤记录</span></h2>
             <div class="summary" id="recordsSummary" data-i18n="no_hours">今日暂无完整工时记录</div>
+            <div class="records-toolbar">
+                <div class="field">
+                    <label for="recordsFilter" data-i18n="records_filter_label">Filter</label>
+                    <input id="recordsFilter" type="search" data-i18n-ph="records_filter_ph" placeholder="Search staff, type, date, status, verification" autocomplete="off" />
+                </div>
+                <div class="field records-page-size">
+                    <label for="recordsPageSize" data-i18n="records_page_size">Rows</label>
+                    <select id="recordsPageSize">
+                        <option value="10">10</option>
+                        <option value="25">25</option>
+                        <option value="50">50</option>
+                        <option value="100">100</option>
+                    </select>
+                </div>
+            </div>
             <div class="table-wrap">
                 <table>
                     <thead>
-                        <tr><th data-i18n="th_emp">员工</th><th data-i18n="th_type">类型</th><th data-i18n="th_date">日期</th><th data-i18n="th_time">时间</th><th data-i18n="th_status">状态</th></tr>
+                        <tr>
+                            <th><button type="button" class="table-sort" data-record-sort="employeeName" data-i18n="th_emp">员工</button></th>
+                            <th><button type="button" class="table-sort" data-record-sort="type" data-i18n="th_type">类型</button></th>
+                            <th><button type="button" class="table-sort" data-record-sort="date" data-i18n="th_date">日期</button></th>
+                            <th><button type="button" class="table-sort" data-record-sort="time" data-i18n="th_time">时间</button></th>
+                            <th><button type="button" class="table-sort" data-record-sort="status" data-i18n="th_status">状态</button></th>
+                            <th><button type="button" class="table-sort" data-record-sort="verifyStatus" data-i18n="th_verify">核验</button></th>
+                        </tr>
                     </thead>
                     <tbody id="recordsBody"></tbody>
                 </table>
             </div>
+            <div class="records-pager">
+                <button class="btn ghost" id="recordsPrevBtn" type="button" data-i18n="records_prev">Previous</button>
+                <div class="records-page-info" id="recordsPageInfo">0</div>
+                <button class="btn ghost" id="recordsNextBtn" type="button" data-i18n="records_next">Next</button>
+            </div>
             <div class="empty" id="recordsEmpty" data-i18n="records_empty">暂无打卡记录。</div>
+            <div class="row-actions" style="margin-bottom:8px;">
+                <button class="btn" id="verifyRunBtn"><svg class="ico"><use href="#i-scan"/></svg><span data-i18n="verify_run_btn">AI 核验未审记录</span></button>
+            </div>
+            <div class="verify-progress" id="verifyProgress" style="display:none;"></div>
             <div class="row-actions">
                 <button class="btn ghost" id="exportCsvBtn"><svg class="ico"><use href="#i-download"/></svg><span data-i18n="export_csv">导出 CSV</span></button>
                 <button class="btn danger" id="clearRecordsBtn" data-i18n="clear_records">清空记录</button>
@@ -455,6 +515,21 @@
                 <input id="livenessToggle" type="checkbox" class="switch" />
             </label>
             <div id="vlmFields" style="display:none;">
+                <div class="field" style="margin-top:14px;">
+                    <label data-i18n="liveness_mode_label">核验时机</label>
+                    <select id="livenessModeSelect" style="width:100%;padding:8px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--text);font-size:14px;margin-top:4px;">
+                        <option value="deferred" data-i18n="liveness_mode_deferred">先打卡，HR 事后批量核验（快）</option>
+                        <option value="realtime" data-i18n="liveness_mode_realtime">打卡时实时核验（慢，需等待）</option>
+                    </select>
+                    <div class="toggle-desc" style="margin-top:6px;" data-i18n="liveness_mode_desc">高峰期建议用「先打卡后核验」：打卡极快，AI 核验留给 HR 事后在记录页批量跑。</div>
+                </div>
+                <label class="toggle-row" for="showLivenessFramesToggle" style="margin-top:14px;">
+                    <div>
+                        <div class="toggle-title" data-i18n="show_liveness_frames_label">Show AI verification images</div>
+                        <div class="toggle-desc" data-i18n="show_liveness_frames_desc">When hidden, the same images are still sent to AI but are not shown on screen.</div>
+                    </div>
+                    <input id="showLivenessFramesToggle" type="checkbox" class="switch" />
+                </label>
                 <div class="field" style="margin-top:14px;">
                     <label id="realProbLabel">AI 真人置信度阈值 <span id="realProbVal">0.50</span></label>
                     <input id="realProbInput" type="range" min="0.30" max="0.90" step="0.05" />
@@ -534,6 +609,19 @@
     </div>
 </div>
 
+<!-- 人工复核弹层：AI 标记疑似伪造的记录，HR 看抓拍帧 + AI 理由后裁决 -->
+<div class="modal" id="reviewModal">
+    <div class="modal-card">
+        <h3 id="reviewTitle" data-i18n="review_title">人工复核</h3>
+        <div class="thumbs lm-frames" id="reviewFrames"></div>
+        <div class="summary" id="reviewReason" style="margin-top:12px;"></div>
+        <div class="row-actions">
+            <button class="btn" id="reviewMarkBtn"><svg class="ico"><use href="#i-user-check"/></svg><span data-i18n="review_mark_ok">标记已复核无问题</span></button>
+        </div>
+        <button class="btn ghost" id="reviewClose" style="margin-top:8px;" data-i18n="close">关闭</button>
+    </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <!-- 核心库（复用项目已有文件） -->
@@ -552,6 +640,7 @@
 <script src="./js/tms-tracker.js"></script>
 <script src="./js/tms-liveness.js"></script>
 <script src="./js/tms-modal.js"></script>
+<script src="./js/tms-tabular.js"></script>
 <script src="./js/tms-app.js"></script>
 </body>
 </html>

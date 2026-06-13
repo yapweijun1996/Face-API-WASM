@@ -38,7 +38,9 @@ class FaceStorage {
         return new Promise((resolve, reject) => {
             const request = indexedDB.open(DB_NAME, DB_VERSION);
 
-            request.onerror = () => reject(request.error);
+            request.onerror   = () => reject(request.error);
+            // another tab holds an older version open and blocks the upgrade
+            request.onblocked = () => reject(new Error('IndexedDB open blocked by another connection'));
             request.onsuccess = () => {
                 this.db = request.result;
                 console.log('FaceStorage: IndexedDB initialized');
@@ -47,6 +49,16 @@ class FaceStorage {
 
             request.onupgradeneeded = (event) => {
                 const db = event.target.result;
+
+                // Guard the versionchange transaction so schema failures reject
+                // the Promise instead of leaving it pending indefinitely.
+                const upgradeTx = event.target.transaction;
+                if (upgradeTx) {
+                    upgradeTx.onabort = () =>
+                        reject(upgradeTx.error || new Error('IndexedDB upgrade transaction aborted'));
+                    upgradeTx.onerror = () =>
+                        reject(upgradeTx.error || new Error('IndexedDB upgrade transaction error'));
+                }
 
                 // 存储注册进度（断点续传）
                 if (!db.objectStoreNames.contains(STORE_PROGRESS)) {
@@ -228,3 +240,7 @@ class FaceStorage {
 
 // 导出单例
 const faceStorage = new FaceStorage();
+
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = { FaceStorage, faceStorage };
+}

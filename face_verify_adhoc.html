@@ -536,6 +536,20 @@
             verifyStatusText.parentElement.className = `status-bar ${type}`;
         }
 
+        function friendlyStorageError(err) {
+            const msg = (err && err.message) || String(err);
+            if (/QuotaExceeded|quota/i.test(msg)) {
+                return 'Storage is full. Please clear some browser storage space and try again.';
+            }
+            if (/blocked/i.test(msg)) {
+                return 'Database is blocked by another tab. Please close other tabs and refresh.';
+            }
+            if (/aborted/i.test(msg)) {
+                return 'Storage operation was interrupted. Please refresh and try again.';
+            }
+            return 'Failed to access storage: ' + msg;
+        }
+
         function updateImageCount() {
             imageCount.textContent = adhocUsers.length;
             startBtn.disabled = adhocUsers.length === 0 || !faceApiReady;

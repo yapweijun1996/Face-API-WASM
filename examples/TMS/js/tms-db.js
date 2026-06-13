@@ -13,9 +13,12 @@
  */
 
 const TMS_DB_NAME = 'TMS_DB';
-const TMS_DB_VERSION = 1;
+const TMS_DB_VERSION = 2;          // v2：新增 attendance_frames store（延迟核验抓拍）
 const STORE_EMPLOYEES = 'employees';
 const STORE_ATTENDANCE = 'attendance';
+// 延迟核验模式下抓拍的帧单独存这里（keyPath=recordId），避免挂在考勤记录上
+// 拖慢 getAllAttendance —— 记录页/看板每次都 getAll，帧很重不该被一并反序列化。
+const STORE_FRAMES = 'attendance_frames';
 
 const SETTINGS_KEY = 'tms_settings';
 const DEFAULT_SETTINGS = {
@@ -26,6 +29,8 @@ const DEFAULT_SETTINGS = {
     workEnd: '18:00',           // 下班时间
     graceMin: 10,               // 迟到宽限（分钟）
     liveness: false,            // AI 视觉活体核验（MiniCPM-V via LM Studio）：默认关闭
+    livenessMode: 'deferred',   // 'realtime'=打卡时阻塞送审；'deferred'=先打卡抓帧、HR 事后批量核验
+    showLivenessFrames: false,  // 是否在核验弹层展示送给 AI 的帧；false 仍会发送，只是不显示给终端用户
     livenessRealProb: 0.50,     // VLM「真人置信度」放行阈值（越大越严格）；务必用真实样本校准
     vlmEndpoint: 'http://127.0.0.1:6501/v1',   // LM Studio OpenAI 兼容前缀（端口随 LM Studio 设置改）
     vlmModel: 'minicpm-v-4.6',  // 已加载的视觉模型 id（LM Studio「API Model Identifier」）
@@ -57,6 +62,10 @@ class TmsDB {
                     const s = db.createObjectStore(STORE_ATTENDANCE, { keyPath: 'recordId', autoIncrement: true });
                     s.createIndex('employeeId', 'employeeId', { unique: false });
                     s.createIndex('timestamp', 'timestamp', { unique: false });
+                }
+                // v2：抓拍帧独立 store，key = 对应考勤记录的 recordId
+                if (!db.objectStoreNames.contains(STORE_FRAMES)) {
+                    db.createObjectStore(STORE_FRAMES, { keyPath: 'recordId' });
                 }
             };
         });
@@ -165,10 +174,56 @@ class TmsDB {
             employeeName: rec.employeeName || '',
             type: rec.type === 'out' ? 'out' : 'in',
             status: rec.status || 'ontime',     // ontime | late | early | overtime
+            // 核验状态：none=无需核验(实时模式/关防伪) | pending=待AI核验 | real=AI判真人
+            //          | suspect=AI疑似伪造,待人工复核 | reviewed=人工已复核无问题 | error=核验失败可重试
+            verifyStatus: rec.verifyStatus || 'none',
             timestamp: rec.timestamp || Date.now()
         };
         const id = await this._req(this._tx(STORE_ATTENDANCE, 'readwrite').add(data));
         return { recordId: id, ...data };
+    }
+
+    // ===== 延迟核验：抓拍帧（独立 store）+ 核验状态更新 =====
+
+    /** 存某条考勤记录的抓拍帧（dataURL[]）。frames 重，单独 store，按需读取。 */
+    async saveFrames(recordId, frames) {
+        await this.init();
+        await this._req(this._tx(STORE_FRAMES, 'readwrite').put({ recordId, frames: frames || [] }));
+        return true;
+    }
+
+    async getFrames(recordId) {
+        await this.init();
+        const row = await this._req(this._tx(STORE_FRAMES, 'readonly').get(recordId));
+        return row ? row.frames : null;
+    }
+
+    async deleteFrames(recordId) {
+        await this.init();
+        await this._req(this._tx(STORE_FRAMES, 'readwrite').delete(recordId));
+        return true;
+    }
+
+    /** 更新某条考勤记录的核验结果。patch: {verifyStatus, verifyConfidence?, verifyReason?, verifiedAt?} */
+    async updateAttendanceVerify(recordId, patch) {
+        await this.init();
+        return new Promise((resolve, reject) => {
+            const tx = this.db.transaction(STORE_ATTENDANCE, 'readwrite');
+            const store = tx.objectStore(STORE_ATTENDANCE);
+            const getReq = store.get(recordId);
+            let updated = null;
+            getReq.onsuccess = () => {
+                const rec = getReq.result;
+                if (!rec) { tx.abort(); reject(new Error('record not found')); return; }
+                Object.assign(rec, patch);
+                updated = rec;
+                store.put(rec);
+            };
+            getReq.onerror = () => reject(getReq.error);
+            tx.oncomplete = () => resolve(updated);
+            tx.onabort = () => { if (updated) reject(tx.error || new Error('IDB transaction aborted')); };
+            tx.onerror = () => reject(tx.error || new Error('IDB transaction error'));
+        });
     }
 
     async getAllAttendance() {
@@ -202,6 +257,7 @@ class TmsDB {
     async clearAttendance() {
         await this.init();
         await this._req(this._tx(STORE_ATTENDANCE, 'readwrite').clear());
+        await this._req(this._tx(STORE_FRAMES, 'readwrite').clear());   // 抓拍帧一并清掉
         return true;
     }
 

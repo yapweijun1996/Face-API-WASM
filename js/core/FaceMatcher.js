@@ -260,8 +260,6 @@ class FaceMatcher {
             return [];
         }
 
-        // 计算所有距离
-        const distances = [];
         const userDistances = new Map(); // 每个用户的最佳距离
 
         for (let i = 0; i < this.descriptors.length; i++) {
