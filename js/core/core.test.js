@@ -268,6 +268,20 @@ test('buildExtraLines: 过滤 face- 前缀、排除 Total、去掉命名空间',
     ]);
 });
 
+test('buildExtraLines: count < 0 时追加 (err) 后缀', () => {
+    const fake = {
+        getEntriesByType: () => [
+            { name: 'face-init: JSON load', duration: 88, detail: { count: -1 } },
+            { name: 'face-init: Storage init', duration: 210, detail: { count: 0 } },
+        ]
+    };
+    const lines = buildExtraLines(fake);
+    assert.deepStrictEqual(lines, [
+        'JSON load: 88ms (err)',
+        'Storage init: 210ms'
+    ]);
+});
+
 test('buildExtraLines: perfApi 无效时返回空数组', () => {
     assert.deepStrictEqual(buildExtraLines(null), []);
     assert.deepStrictEqual(buildExtraLines({ getEntriesByType: null }), []);

@@ -72,7 +72,11 @@
         if (!p || typeof p.getEntriesByType !== 'function') return [];
         return p.getEntriesByType('measure')
             .filter(e => e.name.startsWith('face-') && !e.name.includes('Total'))
-            .map(e => e.name.replace(/^face-(?:init|reg): /, '') + ': ' + Math.round(e.duration) + 'ms');
+            .map(e => {
+                const label = e.name.replace(/^face-(?:init|reg): /, '');
+                const suffix = (e.detail && e.detail.count < 0) ? ' (err)' : '';
+                return label + ': ' + Math.round(e.duration) + 'ms' + suffix;
+            });
     }
 
     /** 是否启用 debug 浮层（URL ?debug=1 或 localStorage faceDebug=1）。 */

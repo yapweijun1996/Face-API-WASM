@@ -911,6 +911,17 @@
                 requestPersistentStorage();
 
             } catch (error) {
+                // Close any orphaned timing mark so the Performance timeline stays consistent
+                if (performance.getEntriesByName('face-init:storage-start').length > 0 &&
+                    performance.getEntriesByName('face-init:storage-end').length === 0) {
+                    performance.mark('face-init:storage-end');
+                    try {
+                        performance.measure('face-init: Storage init', {
+                            start: 'face-init:storage-start', end: 'face-init:storage-end',
+                            detail: { count: -1 }
+                        });
+                    } catch (_) {}
+                }
                 console.error('❌ Init error:', error);
                 hideSpinner();
                 setStatus('Initialization failed', 'error');
