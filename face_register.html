@@ -657,7 +657,7 @@
             console.log(`Warm-up: ${(timing.warmupEnd - timing.warmupStart).toFixed(0)}ms`);
             console.log(`────────────────`);
             console.log(`🚀 Total ready time: ${(timing.totalReady - timing.pageStart).toFixed(0)}ms`);
-            const perfEntries = performance.getEntriesByType('measure').filter(e => e.name.startsWith('face-init:'));
+            const perfEntries = performance.getEntriesByType('measure').filter(e => e.name.startsWith('face-'));
             if (perfEntries.length > 0) {
                 console.log('📐 PerformanceAPI breakdown:');
                 perfEntries.forEach(e => console.log(`  ⏱️ ${e.name}: ${Math.round(e.duration)}ms`));

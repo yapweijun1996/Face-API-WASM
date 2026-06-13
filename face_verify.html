@@ -917,7 +917,7 @@
                 console.log(`🚀 Total initialization time: ${totalTime.toFixed(0)}ms`);
                 console.log('────────────────────────────────');
                 performance.getEntriesByType('measure')
-                    .filter(e => e.name.startsWith('face-init:'))
+                    .filter(e => e.name.startsWith('face-'))
                     .forEach(e => console.log(`  ⏱️ ${e.name}: ${Math.round(e.duration)}ms`));
 
                 faceApiReady = true;
