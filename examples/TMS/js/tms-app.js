@@ -1190,6 +1190,7 @@
         try {
             saved = await tmsDB.addAttendance({
                 employeeId: emp.id, employeeName: emp.name, type, status,
+                hasFrames,
                 verifyStatus: needsDeferredVerify ? 'pending' : (geometryNeedsReview ? 'suspect' : (vlmVerdict ? 'real' : 'none')),
                 ...gp,
                 ...vp
@@ -1709,6 +1710,7 @@
         const queue = all.filter(r =>
             r.timestamp >= cutoff &&
             (forceAll || wanted.includes(r.verifyStatus) ||
+                (!explicitStatuses && (r.verifyStatus || 'none') === 'none' && r.hasFrames !== false) ||
                 (!explicitStatuses && (r.verifyStatus === 'real' || r.verifyStatus === 'suspect') &&
                     (r.verifyVersion !== currentVerifyVersion ||
                         r.verifyReviewMode !== currentReviewMode ||
@@ -1735,7 +1737,7 @@
             const storedFrames = await tmsDB.getFrames(r.recordId);
             const frames = storedFrames && storedFrames.length ? storedFrames.slice(0, currentFrameCount) : [];
             if (!frames.length) {                // 没帧可核验；强制重跑时跳过，避免覆盖旧状态
-                if (!forceAll) await tmsDB.updateAttendanceVerify(r.recordId, { verifyStatus: 'none' });
+                if (!forceAll) await tmsDB.updateAttendanceVerify(r.recordId, { verifyStatus: 'none', hasFrames: false });
                 done++; continue;
             }
             try {
@@ -1744,6 +1746,7 @@
                 const isReal = v.real && v.confidence >= settings.livenessRealProb && !v.uncertain && !geometrySuspect;
                 const verifyPatch = {
                     verifyStatus: isReal ? 'real' : 'suspect',
+                    hasFrames: true,
                     verifyConfidence: v.confidence,
                     verifyReason: v.reason,
                     verifyAttackType: v.attack_type || 'unknown',

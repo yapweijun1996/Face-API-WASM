@@ -192,6 +192,7 @@ class TmsDB {
             // 核验状态：none=无需核验(实时模式/关防伪) | pending=待AI核验 | real=AI判真人
             //          | suspect=AI疑似伪造,待人工复核 | reviewed=人工已复核无问题 | error=核验失败可重试
             verifyStatus: rec.verifyStatus || 'none',
+            hasFrames: !!rec.hasFrames,
             verifyAttackType: rec.verifyAttackType || 'unknown',
             verifySpoofCues: Array.isArray(rec.verifySpoofCues) ? rec.verifySpoofCues.slice(0, 8) : [],
             verifyUncertain: !!rec.verifyUncertain,
