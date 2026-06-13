@@ -253,6 +253,7 @@ test('buildExtraLines: 过滤 face- 前缀、排除 Total、去掉命名空间',
         getEntriesByType: () => [
             { name: 'face-init: Backend setup', duration: 123.7 },
             { name: 'face-init: Model loading', duration: 800 },
+            { name: 'face-init: JSON load', duration: 88.3 },
             { name: 'face-init: Total', duration: 999 },
             { name: 'face-reg: Full registration flow', duration: 456.2 },
             { name: 'other: Unrelated', duration: 10 },
@@ -262,6 +263,7 @@ test('buildExtraLines: 过滤 face- 前缀、排除 Total、去掉命名空间',
     assert.deepStrictEqual(lines, [
         'Backend setup: 124ms',
         'Model loading: 800ms',
+        'JSON load: 88ms',
         'Full registration flow: 456ms'
     ]);
 });

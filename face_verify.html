@@ -813,6 +813,11 @@
                     setStatus('Failed to parse JSON: ' + result.error, 'error');
                 }
             } catch (error) {
+                performance.mark('face-init:json-end');
+                performance.measure('face-init: JSON load', {
+                    start: 'face-init:json-start', end: 'face-init:json-end',
+                    detail: { count: -1 }
+                });
                 setStatus('Failed to read file: ' + error.message, 'error');
             }
 
