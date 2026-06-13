@@ -143,18 +143,18 @@ This is good. No change needed.
 **⛔ PIN / admin-confirm fallback — BANNED (decided 2026-06-14).** Do not add or recommend "ask for PIN", "manager/admin approval", or manual confirmation as the fallback for failed/suspect anti-spoofing. It shifts the biometric PAD problem into an operational bypass, slows clock-in, and creates social-engineering / rubber-stamp risk. Suspect records may be flagged for audit, but the product flow must not depend on PIN/admin override as the anti-spoofing control.
 
 ### P3-4: Passive 3D-vs-Planar Landmark Consistency (Research Candidate)
-**Status:** Research candidate only — not implemented, must be calibrated on real live / phone / print samples before enforcement.
+**Status:** ✅ Implemented v1 in `examples/TMS/js/tms-geometry.js` — passive signal only, must be calibrated on real live / phone / print samples before stricter enforcement.
 
 **Research basis:** Head pose from 2D face landmarks can be estimated by fitting known 3D face-model points to their 2D projections. OpenCV documents this as Perspective-n-Point: solve for rotation and translation that minimize reprojection error from 3D-2D correspondences. MediaPipe's face geometry docs describe converting face landmark screen coordinates into a metric 3D space and estimating a face pose transformation matrix. NIST FATE PAD also treats replay/photo presentation as a core PAD threat, so passive geometry is relevant but should be treated as a signal, not certification.
 
 **Why it helps:** A real face has non-planar structure. When the head naturally yaws left/right across consecutive frames, nose, eyes, mouth, cheek contour, and jaw landmarks should change with plausible 3D perspective. A phone photo or printed photo is mostly planar; if it is tilted or moved, landmark motion tends to fit a flat homography better and may show weak/non-human depth parallax.
 
-**Implementation sketch for this repo:**
-- Use existing `face_landmark_68` points first; no new action challenge.
-- Track passive frames while the user naturally approaches/holds still.
-- Estimate head pose per frame with a small canonical 3D face model and a JS/WASM PnP implementation, or approximate yaw from landmark ratios if avoiding OpenCV.js.
-- Compute signals over a short window: yaw delta, reprojection error stability, left/right eye-nose-mouth parallax, and whether landmark motion is better explained by a planar homography than a 3D head model.
-- Treat this as `suspect` metadata for deferred HR/VLM review first, not as a hard block until field-tested.
+**Implemented v1 for this repo:**
+- Uses existing `face_landmark_68` points; no new action challenge.
+- Tracks passive landmarks per face track for about 2.5 seconds / 12 samples.
+- Computes yaw proxy, nose/mouth parallax proxy, and a lightweight planar-motion suspect score.
+- Stores `geometryScore`, `geometrySuspect`, and `geometryReason` on attendance records.
+- Treats geometry as `suspect` metadata for deferred HR/VLM review, not as a certified PAD hard block.
 
 **Limitations:**
 - With only 68 2D landmarks and a monocular RGB camera, this will be noisy.
@@ -168,7 +168,7 @@ This is good. No change needed.
 - NIST FATE PAD overview: https://pages.nist.gov/frvt/html/frvt_pad.html
 
 ### P3-5: Full-Frame VLM Spoof-Cue Prompt Hardening (Research Candidate)
-**Status:** Recommended research direction for the existing MiniCPM-V / LM Studio path; validate on local real attacks before tightening thresholds.
+**Status:** ✅ Implemented v1 in `examples/TMS/js/tms-liveness.js`; validate on local real attacks before tightening thresholds.
 
 **Research basis:** PAD literature treats print attacks, digital photo attacks, and video replay attacks as standard presentation attacks. Mobile PAD research highlights that replay/print attacks can expose artifacts such as moire, screen glare, color distortion, reflection, and shape deformation. Recent VLM/MLLM face anti-spoofing work (for example SHIELD / FaceShield-style benchmarks) indicates vision-language models can be useful for interpretable spoof reasoning, but they are still research systems and not a substitute for certified PAD.
 
@@ -181,7 +181,7 @@ This is good. No change needed.
 - inconsistent lighting between face and background
 - multiple frames showing a static flat image instead of a live person in 3D space
 
-**Output contract suggestion:** Keep strict JSON, but include explicit spoof-cue fields so records are auditable:
+**Output contract:** Strict JSON includes explicit spoof-cue fields so records are auditable:
 ```json
 {
   "real": false,
@@ -194,6 +194,8 @@ This is good. No change needed.
 ```
 
 **Operational rule:** If the VLM cannot see enough surroundings because the face fills the frame, return `uncertain=true` or `real=false` with a low confidence. Do not resolve this by asking for PIN/admin confirmation; use passive re-capture, deferred review, or certified PAD.
+
+**2026-06-14 hardening after false-verified phone sample:** The prompt now uses `VLM_PROMPT_VERSION = "vlm-spoof-cues-v2"` and explicitly says any visible phone/screen in any frame must be `real=false` with `attack_type="phone_screen"`. Send frames at 768px / JPEG 0.78 so small phones, bezels, glare, and moire are less likely to disappear during compression. Attendance records store `verifyVersion`, and batch verification re-runs old-version `real/suspect` records so previous false `Verified` results can be corrected by newer rules.
 
 **References:**
 - Face PAD survey / standard threat scope: https://arxiv.org/abs/2212.03680
@@ -220,8 +222,8 @@ This is good. No change needed.
 | ~~P3-3 MiniFASNet liveness~~ | ~~P3~~ | — | ⛔ BANNED — tested 2026-06-14, does not work. Do not re-attempt. |
 | ~~Random action challenge liveness~~ | ~~P3~~ | — | ⛔ BANNED — decided 2026-06-14. Do not implement blink/gesture/head-turn challenge flows. |
 | ~~PIN/admin-confirm fallback~~ | ~~P3~~ | — | ⛔ BANNED — decided 2026-06-14. Do not use PIN/admin override as anti-spoofing fallback. |
-| P3-4 Passive 3D-vs-planar landmark consistency | P3 | Research + calibration | Candidate only — passive signal, not hard gate yet |
-| P3-5 Full-frame VLM spoof-cue prompt hardening | P3 | Low/medium | Candidate — improve JSON cues and uncertainty handling |
+| P3-4 Passive 3D-vs-planar landmark consistency | P3 | Research + calibration | ✅ Implemented v1 as passive signal, not certified PAD |
+| P3-5 Full-frame VLM spoof-cue prompt hardening | P3 | Low/medium | ✅ Implemented v1 with JSON spoof cues + uncertainty |
 
 ---
 

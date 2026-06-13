@@ -29,18 +29,24 @@
     // ============================================================
     // 纯逻辑（浏览器 + Node 共用，单测覆盖）
     // ============================================================
+    const VLM_PROMPT_VERSION = 'vlm-spoof-cues-v2';
 
     /** 发给 VLM 的活体判别提示词。要求严格 JSON，便于稳定解析。 */
     const VLM_PROMPT =
         'You are a presentation-attack-detection (liveness) checker for a face attendance kiosk. ' +
-        'You are given several webcam frames (about 1 fps) of the person trying to clock in. ' +
+        'Use a SECURITY-FIRST policy: one clear spoof cue is enough to mark SPOOF, even if the face looks realistic. ' +
+        'You are given several FULL webcam frames (about 1 fps), not cropped face images, of the person trying to clock in. ' +
         'Decide if this is a GENUINE LIVE PERSON physically present in front of the camera, ' +
         'or a SPOOF: a photo, a phone/tablet/computer screen showing a face or video, a printed picture, or a mask. ' +
-        'Strong spoof cues: a hand holding a phone or photo; screen bezels, edges, glare or moire; ' +
-        'a rectangular device frame inside the image; a flat 2D look; video-playback artifacts; ' +
-        'or a face that only fills a smaller rectangle inside the frame. ' +
+        'Inspect EVERY frame, especially corners and edges. Strong spoof cues: ANY visible phone/tablet/laptop, device bezel, or rectangular screen boundary; ' +
+        'a hand or fingers holding a display or printed photo; paper/photo edges, curled paper, flat card borders, or mask edges; ' +
+        'screen glare, specular reflection, moire, pixel-grid or RGB subpixel artifacts; inconsistent lighting between the face and background; ' +
+        'multiple frames showing a static flat image instead of a live person in 3D space; or a face close-up that fills the frame and hides context. ' +
+        'If a phone or screen is visible anywhere in any frame, set real=false, attack_type="phone_screen", and include that cue. ' +
+        'Do NOT mark real just because the indoor background is consistent or the face is clear. ' +
+        'If the surroundings are not visible enough to rule out a phone/photo, set uncertain=true and real=false. ' +
         'Reply with STRICT JSON only, no extra text: ' +
-        '{"real": true or false, "confidence": a number 0.0-1.0, "reason": "<short reason>"}. ' +
+        '{"real": true or false, "confidence": a number 0.0-1.0, "attack_type": "phone_screen|printed_photo|video_replay|mask|unknown|none", "spoof_cues": ["short cue"], "uncertain": true or false, "reason": "<short reason>"}. ' +
         'Set real=true only if you are confident it is a live, in-person human.';
 
     /**
@@ -79,7 +85,7 @@
 
     /**
      * 从模型回复里稳健解析 verdict。容忍前后多余文字、real 为字符串、confidence 缺失。
-     * @returns {{real:boolean, confidence:number, reason:string}|null} 无法解析返回 null
+     * @returns {{real:boolean, confidence:number, attack_type:string, spoof_cues:string[], uncertain:boolean, reason:string}|null} 无法解析返回 null
      */
     function parseVerdict(text) {
         if (!text || typeof text !== 'string') return null;
@@ -97,7 +103,25 @@
         if (!isFinite(c)) c = real ? 1 : 0;
         c = Math.max(0, Math.min(1, c));
 
-        return { real: real, confidence: c, reason: String(o.reason == null ? '' : o.reason).slice(0, 200) };
+        const allowedAttackTypes = new Set(['phone_screen', 'printed_photo', 'video_replay', 'mask', 'unknown', 'none']);
+        const attackType = allowedAttackTypes.has(String(o.attack_type || '').trim())
+            ? String(o.attack_type).trim()
+            : 'unknown';
+        const spoofCues = Array.isArray(o.spoof_cues)
+            ? o.spoof_cues.map(x => String(x).trim()).filter(Boolean).slice(0, 8).map(x => x.slice(0, 80))
+            : [];
+        let uncertain = o.uncertain;
+        if (typeof uncertain === 'string') uncertain = /^(true|yes|1|uncertain|maybe)$/i.test(uncertain.trim());
+        else uncertain = !!uncertain;
+
+        return {
+            real: real,
+            confidence: c,
+            attack_type: attackType,
+            spoof_cues: spoofCues,
+            uncertain,
+            reason: String(o.reason == null ? '' : o.reason).slice(0, 200)
+        };
     }
 
     // ============================================================
@@ -174,7 +198,7 @@
     // ============================================================
     // 导出
     // ============================================================
-    const api = { VLM_PROMPT, buildMessages, parseVerdict, captureVideoFrame, VlmLiveness };
+    const api = { VLM_PROMPT_VERSION, VLM_PROMPT, buildMessages, parseVerdict, captureVideoFrame, VlmLiveness };
     if (typeof module !== 'undefined' && module.exports) module.exports = api;
     else root.TmsLiveness = api;
 

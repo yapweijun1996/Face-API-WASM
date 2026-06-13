@@ -35,6 +35,8 @@
 - 🎉 **打卡成功粒子庆祝**：从人脸位置迸发彩色粒子（上班绿、下班红）。
 - 🎥 **实时画面标签 + 自动打卡**：姓名/倒计时环直接叠加在视频上，对准即打卡，免按钮。
 - 🛡 **AI 视觉活体核验（可选，默认关闭）**：打卡时抓约 5 帧整帧（1fps×5）发给**本机 LM Studio** 的 **MiniCPM-V** 视觉模型，由大模型判「真人在场 vs 伪造（照片/手机或屏幕/打印件/面具）」。看的是**整帧上下文**——能识破「举着手机播视频」（手、屏幕边框、人脸只占小矩形），这正是小型纹理模型挡不住的。人脸框上方实时显示 `live 0.xx` 置信度。画面只发往 localhost,不出网。
+  - 🔎 **被动辅助信号**：VLM 会输出 `attack_type` / `spoof_cues` / `uncertain` 供审计；系统也会用 68 点 landmark 做轻量 3D-vs-平面一致性检查，把可疑平面运动作为 `suspect` 证据。两者都是辅助信号，不是认证级 PAD，也不保证 100% 防伪。
+  - 🧾 **规则版本留痕**：VLM 核验结果保存 `verifyVersion`；当防伪 prompt 升级后，批量核验会重跑旧版本的 `Verified/Review` 记录，避免旧误判长期保留。
   - ⚙️ **前置条件**:本机装 [LM Studio](https://lmstudio.ai/),加载一个视觉模型(如 `minicpm-v-4.6`),开启本地服务器并记下端口;在设置页填 `LM Studio API 地址`(如 `http://127.0.0.1:6501/v1`)与`视觉模型 id`。**LM Studio 不可达时打卡继续但跳过核验(失败放行)**。
   - ⚠️ **诚实边界**:VLM 判别比小模型强,但**仍非认证级 PAD**,也无法保证挡住高水平实时 Deepfake;每次核验约需数秒(采集 5s + 推理 ~5-10s)。请用你自己的真人/照片/屏幕样本验证后再调「真人置信度阈值」(默认 0.5)。高安全场景请接入通过 ISO/IEC 30107-3 PAD 测试的服务端方案。
   - ⛔ **禁止方案**:本项目不采用随机动作挑战（眨眼/微笑/张嘴/左右转头/点头/随机手势）。这类流程会拖慢打卡高峰、增加用户摩擦，且不能可靠阻止预制 replay/deepfake；更强防伪应走被动整帧 VLM、HR 事后核验或认证 PAD SDK/服务。
@@ -81,8 +83,10 @@ examples/TMS/
 │   ├── tms-db.js           # IndexedDB（员工/考勤）+ localStorage（设置）
 │   ├── tms-i18n.js         # 轻量 i18n（英文 / 简体中文，默认英文）
 │   ├── tms-tracker.js      # 人脸位置追踪（IoU 关联，按位置维护 hold/活体状态）
+│   ├── tms-geometry.js     # 被动 68 点 landmark 几何信号（3D-vs-平面一致性启发式）
 │   ├── tms-liveness.js     # AI 视觉活体客户端：MiniCPM-V via LM Studio（提示词/解析纯逻辑可 Node 单测）
 │   ├── tms-liveness.test.js# 纯逻辑单测（node --test js/tms-liveness.test.js）
+│   ├── tms-geometry.test.js# 纯逻辑单测（node --test js/tms-geometry.test.js）
 │   └── tms-app.js          # 主逻辑：初始化、摄像头、识别、注册、UI、PWA 更新
 └── README.md
 ```
@@ -93,7 +97,8 @@ FaceMatcher）与 `models/`，通过相对路径 `../../` 引用，无需复制�
 ### 活体核验自测
 
 ```bash
-node --test examples/TMS/js/tms-liveness.test.js   # 9 项纯逻辑测试（提示词消息体构造 + verdict 解析稳健性）
+node --test examples/TMS/js/tms-liveness.test.js   # VLM 提示词消息体 + verdict 解析稳健性
+node --test examples/TMS/js/tms-geometry.test.js   # 被动 landmark 几何信号
 ```
 
 VLM 客户端的端到端推理（连本机 LM Studio、5 帧 → MiniCPM-V → 解析 JSON 判定）与

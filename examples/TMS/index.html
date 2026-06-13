@@ -263,6 +263,27 @@
     .verify-suspect, .verify-reviewed { cursor: pointer; }
     .verify-progress { font-size: 13px; color: var(--muted); margin-bottom: 10px; text-align: center; }
     .verify-scope { flex: 0 0 auto; padding: 0 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--card); color: var(--text); font-size: 14px; font-weight: 600; cursor: pointer; }
+    /* 过滤态徽章：仅核验「需复核」视图时出现，带计数 + 清除 */
+    /* 多状态快捷筛选条 */
+    .filter-chip { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 12px; }
+    .fchip { display: inline-flex; align-items: center; gap: 5px; padding: 5px 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--card); color: var(--text); font-size: 13px; font-weight: 600; cursor: pointer; transition: background .15s, border-color .15s; }
+    .fchip .ico { width: 14px; height: 14px; }
+    .fchip:hover { background: var(--hover); }
+    .fchip.verify-pending .ico { color: var(--muted); }
+    .fchip.verify-suspect .ico { color: var(--warn); }
+    .fchip.verify-error   .ico { color: var(--out); }
+    /* 选中态：实心高亮，便于一眼看出当前过滤的是哪类 */
+    .fchip.active { color: var(--accent-ink); border-color: transparent; }
+    .fchip.verify-pending.active { background: var(--muted); }
+    .fchip.verify-suspect.active { background: var(--warn); }
+    .fchip.verify-error.active   { background: var(--out); color: var(--danger-ink); }
+    .fchip.active .ico { color: currentColor; }
+    .fchip-clear { color: var(--muted); }
+    .fchip-clear:hover { color: var(--text); }
+    /* 只读完成态：灰显、虚线边、不可点 */
+    .fchip-done { cursor: default; color: var(--muted); background: transparent; border-style: dashed; }
+    .fchip-done:hover { background: transparent; }
+    .fchip-done.verify-real .ico, .fchip-done.verify-reviewed .ico { color: var(--in); }
     .sched-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
     .sched-grid .field:last-child { grid-column: 1 / -1; }
     .field input[type="time"], .field input[type="number"] { color-scheme: var(--control-color-scheme); }
@@ -358,7 +379,7 @@
     }
     .image-viewer-img {
         max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 8px;
-        transform-origin: center center; transition: transform .12s ease;
+        transition: width .12s ease;
     }
     .viewer-btn {
         width: 40px; height: 40px; display: inline-grid; place-items: center;
@@ -583,6 +604,7 @@
                     </select>
                 </div>
             </div>
+            <div class="filter-chip" id="recordsFilterChip" style="display:none;"></div>
             <div class="table-wrap">
                 <table>
                     <thead>
@@ -611,6 +633,9 @@
                     <option value="week" data-i18n="verify_scope_week">近 7 天</option>
                 </select>
                 <button class="btn" id="verifyRunBtn"><svg class="ico"><use href="#i-scan"/></svg><span data-i18n="verify_run_btn">AI 核验未审记录</span></button>
+            </div>
+            <div class="row-actions" style="margin-bottom:8px;">
+                <button class="btn ghost" id="verifyRetryBtn" style="display:none;"><svg class="ico"><use href="#i-x-circle"/></svg><span>重试失败</span></button>
             </div>
             <div class="verify-progress" id="verifyProgress" style="display:none;">
                 <div class="bar"><div id="verifyBar"></div></div>
@@ -644,6 +669,14 @@
                 <label id="thresholdLabel">匹配阈值 <span id="thresholdVal">0.50</span></label>
                 <input id="thresholdInput" type="range" min="0.20" max="0.32" step="0.01" />
             </div>
+            <div class="field">
+                <label id="initialMatchLabel">首次身份置信度 80%</label>
+                <input id="initialMatchInput" type="range" min="70" max="95" step="1" />
+            </div>
+            <div class="field">
+                <label id="lockedMatchLabel">锁定连续置信度 60%</label>
+                <input id="lockedMatchInput" type="range" min="45" max="80" step="1" />
+            </div>
         </div>
         <div class="card">
             <h2><svg class="ico"><use href="#i-shield"/></svg><span data-i18n="security_title">防伪</span></h2>
@@ -663,6 +696,13 @@
                     </select>
                     <div class="toggle-desc" style="margin-top:6px;" data-i18n="liveness_mode_desc">高峰期建议用「先打卡后核验」：打卡极快，AI 核验留给 HR 事后在记录页批量跑。</div>
                 </div>
+                <label class="toggle-row" for="autoRetryToggle" style="margin-top:14px;">
+                    <div>
+                        <div class="toggle-title" data-i18n="auto_retry_label">失败自动重试</div>
+                        <div class="toggle-desc" data-i18n="auto_retry_desc">LM Studio 恢复可达后，后台自动补跑「失败」的记录，无需 HR 手动点重试。</div>
+                    </div>
+                    <input id="autoRetryToggle" type="checkbox" class="switch" />
+                </label>
                 <label class="toggle-row" for="showLivenessFramesToggle" style="margin-top:14px;">
                     <div>
                         <div class="toggle-title" data-i18n="show_liveness_frames_label">Show AI verification images</div>
@@ -798,6 +838,7 @@
 <script src="./js/tms-i18n.js"></script>
 <script src="./js/tms-db.js"></script>
 <script src="./js/tms-tracker.js"></script>
+<script src="./js/tms-geometry.js"></script>
 <script src="./js/tms-liveness.js"></script>
 <script src="./js/tms-modal.js"></script>
 <script src="./js/tms-tabular.js"></script>

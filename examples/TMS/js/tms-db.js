@@ -23,6 +23,8 @@ const STORE_FRAMES = 'attendance_frames';
 const SETTINGS_KEY = 'tms_settings';
 const DEFAULT_SETTINGS = {
     matchThreshold: 0.32,       // 距离小于此值才认定为同一人（越小越严格）
+    initialMatchConfidence: 80, // 首次确认员工身份所需置信度（百分比）
+    lockedMatchConfidence: 60,  // 锁定后连续跟踪同一员工所需置信度（百分比）
     clockCooldownMs: 60000,     // 同一人两次打卡的最小间隔，避免连续误触发
     enrollCaptures: 12,         // 注册时采集的帧数
     workStart: '09:00',         // 上班时间
@@ -30,6 +32,7 @@ const DEFAULT_SETTINGS = {
     graceMin: 10,               // 迟到宽限（分钟）
     liveness: false,            // AI 视觉活体核验（MiniCPM-V via LM Studio）：默认关闭
     livenessMode: 'deferred',   // 'realtime'=打卡时阻塞送审；'deferred'=先打卡抓帧、HR 事后批量核验
+    autoRetry: false,           // 失败自动重试：LM Studio 健康恢复后后台自动补跑 error 记录
     showLivenessFrames: false,  // 是否在核验弹层展示送给 AI 的帧；false 仍会发送，只是不显示给终端用户
     livenessRealProb: 0.50,     // VLM「真人置信度」放行阈值（越大越严格）；务必用真实样本校准
     vlmEndpoint: 'http://127.0.0.1:6501/v1',   // LM Studio OpenAI 兼容前缀（端口随 LM Studio 设置改）
@@ -187,6 +190,7 @@ class TmsDB {
             verifyAttackType: rec.verifyAttackType || 'unknown',
             verifySpoofCues: Array.isArray(rec.verifySpoofCues) ? rec.verifySpoofCues.slice(0, 8) : [],
             verifyUncertain: !!rec.verifyUncertain,
+            verifyVersion: rec.verifyVersion || '',
             geometryScore: Number.isFinite(Number(rec.geometryScore)) ? Number(rec.geometryScore) : null,
             geometrySuspect: !!rec.geometrySuspect,
             geometryReason: rec.geometryReason || '',

@@ -185,6 +185,7 @@ const detectorOptions = isLowEnd
 `examples/TMS/` is a production-grade attendance system example. Key features beyond the base system:
 
 - **Liveness Detection** via [MiniCPM-V](https://github.com/OpenBMB/MiniCPM) (VLM) running locally on [LM Studio](https://lmstudio.ai/)
+- Passive landmark geometry signal for 3D-vs-planar spoof suspicion
 - Clock-in/out with face match + optional liveness gate
 - PWA (installable, offline)
 - i18n (English/Chinese)
@@ -199,7 +200,7 @@ The liveness module (`js/tms-liveness.js`) calls a local LM Studio endpoint (`ht
 
 **Graceful degradation:** If LM Studio is unreachable, liveness check is skipped and the clock-in proceeds. Change this behavior in `tms-app.js` if you need hard enforcement.
 
-**What it detects:** Phone/tablet/screen replay, printed photos, hand-held photos. Relies on full-frame context — a hand holding a phone is a strong spoof signal.
+**What it detects:** Phone/tablet/screen replay, printed photos, hand-held photos. Relies on full-frame context — a hand holding a phone is a strong spoof signal. VLM verdicts include `attack_type`, `spoof_cues`, and `uncertain`; records also store a passive geometry score.
 
 **What it does NOT guarantee:** High-quality 3D masks, sophisticated deepfakes. Suitable for attendance; not certified for high-security access control.
 
@@ -283,8 +284,9 @@ Quick summary:
 - ✅ FPS / inference-time / match-time dev overlay (`js/core/PerfOverlay.js`, enable with `?debug=1`)
 - ⛔ MiniFASNet client-side liveness — **banned** (tested 2026-06-14, does not work). Use the VLM (LM Studio) liveness path only.
 - ⛔ Random action challenge liveness — **banned** (decided 2026-06-14). Do not implement blink / smile / mouth-open / head-turn / random gesture challenge flows.
+- ⛔ PIN/admin-confirm fallback — **banned** (decided 2026-06-14). Do not use PIN or manager/admin approval as anti-spoofing fallback.
 
-Run tests: `node --test js/core/core.test.js` (24 tests) and `node --test examples/TMS/js/tms-liveness.test.js` (9 tests).
+Run tests: `node --test js/core/core.test.js`, `node --test examples/TMS/js/tms-liveness.test.js`, and `node --test examples/TMS/js/tms-geometry.test.js`.
 
 **Debug overlay:** append `?debug=1` to any verify/register page URL (e.g. `face_verify.html?debug=1`) to show a live FPS / inference-ms / match-ms / backend / model panel.
 

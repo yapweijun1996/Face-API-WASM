@@ -20,22 +20,14 @@
     const WASM_PATH = BASE + 'js/lib/';
 
     const SAFE_MATCH_THRESHOLD = 0.32;
-    // 打卡放行的最低置信度。FaceMatcher: confidence=(1-distance/1.2)*100，
-    // 故 matchThreshold=0.32 对应 confidence≈73.3。此下限须 ≤ 73.3，否则会比
-    // matchThreshold 还严、把阈值内的合法匹配也拒掉（用户本人打不上卡）。
-    // 设 70：让用户可调的 matchThreshold（设置页滑块）成为真正的闸门。
-    const MIN_CLOCK_CONFIDENCE = 70;
     const WEAK_MATCH_WARN_MS = 3000;      // 弱匹配 console.warn 的每员工限流间隔，避免逐帧刷屏
     const SPOOF_HOLD_MS = 2000;           // 判伪/失败后停留多久再重置重试，给用户看清提示
-    // VLM 活体核验：滚动缓冲。摄像头持续以 1fps 缓存最近若干帧；识别通过那刻，
-    // 取「已缓存的前 N 秒」(t-3/-2/-1) 发给大模型做最后一道闸——无需识别后再等。
-    const VLM_FRAME_COUNT = 3;            // 送审帧数（≈ 取前 3 秒）
-    const VLM_FRAME_INTERVAL_MS = 1000;  // 缓冲抓帧间隔（1fps）
-    const VLM_WINDOW_MS = 3500;          // 送审帧须落在最近这段时间内（容忍漏帧）
-    // 送审帧压缩：越小越省 VLM 推理算力（更少视觉 token → 更快）。整帧上下文（手/屏幕边框/2D 平面）
-    // 在 448px 仍清晰可辨；但 JPEG 0.6 会牺牲高频纹理（moire），本设计本就不依赖纹理，可接受。
-    const VLM_FRAME_MAXEDGE = 448;       // 送审帧最长边（px）
-    const VLM_FRAME_QUALITY = 0.6;       // 送审帧 JPEG 质量
+    // 每个 face track 锁定员工后，按 1fps 抓满 3 张真帧才写记录 / 送 AI。
+    const VLM_FRAME_COUNT = 3;
+    const VLM_FRAME_INTERVAL_MS = 1000;
+    // 送审帧保留足够分辨率，避免手机边框/屏幕反光/moire 在缩图里被压没。
+    const VLM_FRAME_MAXEDGE = 768;       // 送审帧最长边（px）
+    const VLM_FRAME_QUALITY = 0.78;      // 送审帧 JPEG 质量
     const BLANK_FRAME_LUMA = 16;         // 平均亮度低于此（0-255）视为黑帧：摄像头预热/重开瞬间会吐黑帧，丢弃不入缓冲
     // 打卡前的人脸构图闸门：活体 VLM 需要看到整帧环境（手、屏幕边框、打印纸边缘等），
     // 所以人脸不能贴满镜头；同时要求大致居中，避免半张脸/偏边缘画面触发核验。
@@ -46,6 +38,7 @@
         maxCenterOffsetX: 0.22,
         maxCenterOffsetY: 0.28
     };
+    const GEOMETRY_SUSPECT_THRESHOLD = 0.72;
 
     // ---------- 运行状态 ----------
     let settings = tmsDB.getSettings();
@@ -117,10 +110,10 @@
             'enrollThumbs', 'enrollCancel', 'enrollTitle',
             'appModal',
             'recordsBody', 'recordsSummary', 'recordsEmpty', 'exportCsvBtn', 'clearRecordsBtn',
-            'recordsFilter', 'recordsPageSize', 'recordsPrevBtn', 'recordsNextBtn', 'recordsPageInfo',
-            'thresholdInput', 'thresholdVal', 'thresholdLabel', 'livenessToggle',
-            'vlmFields', 'livenessModeSelect', 'showLivenessFramesToggle', 'realProbLabel', 'realProbVal', 'realProbInput', 'vlmEndpointInput', 'vlmModelInput',
-            'verifyRunBtn', 'verifyScope', 'verifyProgress', 'verifyBar', 'verifyProgressText', 'reviewModal', 'reviewTitle', 'reviewFrames', 'reviewReason', 'reviewMarkBtn', 'reviewClose',
+            'recordsFilter', 'recordsFilterChip', 'recordsPageSize', 'recordsPrevBtn', 'recordsNextBtn', 'recordsPageInfo',
+            'thresholdInput', 'thresholdVal', 'thresholdLabel', 'initialMatchInput', 'initialMatchLabel', 'lockedMatchInput', 'lockedMatchLabel', 'livenessToggle',
+            'vlmFields', 'livenessModeSelect', 'autoRetryToggle', 'showLivenessFramesToggle', 'realProbLabel', 'realProbVal', 'realProbInput', 'vlmEndpointInput', 'vlmModelInput',
+            'verifyRunBtn', 'verifyRetryBtn', 'verifyScope', 'verifyProgress', 'verifyBar', 'verifyProgressText', 'reviewModal', 'reviewTitle', 'reviewFrames', 'reviewReason', 'reviewMarkBtn', 'reviewClose',
             'imageViewerModal', 'imageViewerTitle', 'imageViewerCounter', 'imageViewerClose', 'imageViewerStage', 'imageViewerImg',
             'imageViewerPrev', 'imageViewerNext', 'imageViewerZoomIn', 'imageViewerZoomOut', 'imageViewerZoomLabel',
             'soundToggle', 'soundFields', 'speakToggle', 'voiceSelect', 'voiceTestBtn', 'voiceFields',
@@ -166,11 +159,33 @@
         }
     }
 
+    function clampNumber(v, min, max, fallback) {
+        const n = Number(v);
+        if (!Number.isFinite(n)) return fallback;
+        return Math.min(max, Math.max(min, n));
+    }
+
+    function normalizeIdentitySettings(src) {
+        const initial = Math.round(clampNumber(src && src.initialMatchConfidence, 70, 95, 80));
+        const lockedRaw = Math.round(clampNumber(src && src.lockedMatchConfidence, 45, 80, 60));
+        return {
+            initialMatchConfidence: initial,
+            lockedMatchConfidence: Math.min(lockedRaw, initial)
+        };
+    }
+
+    function saveIdentitySettings(patch) {
+        const next = normalizeIdentitySettings({ ...settings, ...patch });
+        settings = tmsDB.saveSettings(next);
+        applySettingsToUi();
+    }
+
     // ============================================================
     // 初始化
     // ============================================================
     async function boot() {
         cacheDom();
+        settings = tmsDB.saveSettings(normalizeIdentitySettings(settings));
         settings.theme = normalizeTheme(settings.theme);
         applyTheme(settings.theme);
         TmsModal.init({ root: el.appModal, i18n: I18N, icon });
@@ -179,6 +194,7 @@
         I18N.onChange.push(onLangChange);
         wireUi();
         registerServiceWorker();
+        if (settings.autoRetry) startAutoRetryPoll();   // 启用自动重试则开后台轮询
 
         try {
             setBoot(I18N.t('boot_backend'));
@@ -320,35 +336,15 @@
     }
 
     function captureRingFrame(now) {
-        if (!settings.liveness || appMode !== 'clock' || !activeVideo) return;
+        if (appMode !== 'clock' || !activeVideo) return;
         if (now - lastFrameCapAt < VLM_FRAME_INTERVAL_MS) return;   // 限流到 1fps
         const url = grabSendFrame();
         if (!url) return;   // 黑帧不入缓冲；不推进 lastFrameCapAt，下个 tick 立即重试，尽快补上真帧
         lastFrameCapAt = now;
         frameRing.push({ t: now, url });
-        // 只保留覆盖送审窗口所需的最近若干帧，防止无限增长
-        const cutoff = now - (VLM_WINDOW_MS + VLM_FRAME_INTERVAL_MS * 2);
+        // 兼容保留少量全局帧，实际打卡记录使用每个 track 自己的 captureFrames。
+        const cutoff = now - (VLM_FRAME_INTERVAL_MS * (VLM_FRAME_COUNT + 3));
         while (frameRing.length && frameRing[0].t < cutoff) frameRing.shift();
-    }
-
-    /**
-     * 取「识别前已缓冲」的最近 N 帧（≈ t-3/-2/-1 秒）做最后一道闸。
-     * 帧数不足（刚开摄像头不到 N 秒）或最旧那帧过旧（如刚切回前台）→ 返回 null，等缓冲攒够。
-     */
-    function recentRingFrames(now) {
-        if (frameRing.length < VLM_FRAME_COUNT) return null;
-        const recent = frameRing.slice(-VLM_FRAME_COUNT);
-        if (now - recent[0].t > VLM_WINDOW_MS) return null;
-        return recent.map(f => f.url);
-    }
-
-    // 延迟核验抓帧：不阻塞、不挑剔——缓冲里有几帧用几帧（最多 VLM_FRAME_COUNT），
-    // 一帧都没有（刚开摄像头）就当场补抓一张。返回 [] 表示视频未就绪，调用方据此不写 pending。
-    function captureDeferredFrames() {
-        const recent = frameRing.slice(-VLM_FRAME_COUNT).map(f => f.url).filter(Boolean);
-        if (recent.length) return recent;
-        const one = grabSendFrame();
-        return one ? [one] : [];
     }
 
     // ============================================================
@@ -436,7 +432,7 @@
             if (!alive()) return;
             // 不可达 / 无客户端 / 无帧可送 → fail-open：照常打卡 + 提示核验不可用
             if (!eng || !eng.ready || !frames || !frames.length) {
-                await doClock(emp, action, box, frames);
+                await doClock(emp, action, box, frames, track && track.data ? track.data.geometryResult : null);
                 if (alive()) { showLivenessResult('unavailable', null); await sleep(1400); }
                 return;
             }
@@ -444,23 +440,21 @@
             if (!alive()) return;
             if (track) track.data.realProb = v.confidence;   // 供关窗后人脸框读数展示
             console.log('TMS VLM verdict:', { real: v.real, confidence: Number(v.confidence.toFixed(2)), reason: v.reason });
-            if (v.real && v.confidence >= settings.livenessRealProb) {
-                await doClock(emp, action, box, frames);    // 真人 → 打卡（撒花/语音/冷却）
+            if (v.real && v.confidence >= settings.livenessRealProb && !v.uncertain) {
+                await doClock(emp, action, box, frames, track && track.data ? track.data.geometryResult : null, v);    // 真人 → 打卡（撒花/语音/冷却）
                 if (alive()) { showLivenessResult('real', v); await sleep(1200); }
             } else {
                 showLivenessResult('fake', v);               // 伪造 → 不打卡
                 await sleep(2500);
                 if (alive() && track) {                      // 重置该 track，让用户可重新对准重试
-                    track.data.phase = 'hold';
-                    track.data.startTs = performance.now();
-                    resetLiveness(track.data);
+                    resetTrackLock(track.data, performance.now());
                 }
             }
         } catch (e) {
             // 核验异常（超时/解析失败）→ fail-open：照常打卡，记录原因
             console.warn('TMS VLM gate error, fail-open:', e.message);
             if (alive()) {
-                await doClock(emp, action, box, frames);
+                await doClock(emp, action, box, frames, track && track.data ? track.data.geometryResult : null);
                 showLivenessResult('error', null);
                 await sleep(1400);
             }
@@ -723,6 +717,11 @@
         if (hs.phase === 'done') { prog = 1; }
         else if (hs.phase === 'verifying') { prog = 1; hint = I18N.t('liveness_verifying'); }
         else if (hs.phase === 'framing') { prog = 0; hint = I18N.t(hs.framingKey || 'face_frame_center'); }
+        else if (hs.phase === 'capturing') {
+            const doneCount = Array.isArray(hs.captureFrames) ? hs.captureFrames.length : 0;
+            prog = Math.min(1, doneCount / VLM_FRAME_COUNT);
+            hint = I18N.t('capture_progress', { done: doneCount, total: VLM_FRAME_COUNT });
+        }
         else {
             prog = Math.min(1, (performance.now() - hs.startTs) / HOLD_MS);
             hint = I18N.t(hs.action === 'in' ? 'clock_in_btn' : 'clock_out_btn');
@@ -787,9 +786,148 @@
         return { ok: true, key: '' };
     }
 
+    function updateTrackGeometry(track, det, now) {
+        if (!track || !track.data || typeof TmsGeometry === 'undefined') return null;
+        const positions = det && det.landmarks && det.landmarks.positions;
+        track.data.geometryBuffer = TmsGeometry.addSample(track.data.geometryBuffer || [], positions, now, {
+            suspectScore: GEOMETRY_SUSPECT_THRESHOLD
+        });
+        track.data.geometryResult = TmsGeometry.assess(track.data.geometryBuffer, {
+            suspectScore: GEOMETRY_SUSPECT_THRESHOLD
+        });
+        return track.data.geometryResult;
+    }
+
+    function geometryPatch(geometry) {
+        const g = geometry || {};
+        const score = g.score != null ? g.score : g.geometryScore;
+        const suspect = g.suspect != null ? g.suspect : g.geometrySuspect;
+        const reason = g.reason != null ? g.reason : g.geometryReason;
+        return {
+            geometryScore: Number.isFinite(Number(score)) ? Number(score) : null,
+            geometrySuspect: !!suspect,
+            geometryReason: reason || ''
+        };
+    }
+
+    function resetTrackLock(d, now) {
+        if (!d) return;
+        d.empId = null;
+        d.name = '';
+        d.lockedEmpId = null;
+        d.lockedName = '';
+        d.lockStartTs = 0;
+        d.lastAcceptedTs = 0;
+        d.captureFrames = [];
+        d.captureDone = false;
+        d.captureFailedReason = '';
+        d.action = null;
+        d.startTs = now || performance.now();
+        d.livePassed = false;
+        d.phase = 'hold';
+        d.framingKey = '';
+        d.geometryBuffer = [];
+        d.geometryResult = null;
+        resetLiveness(d);
+    }
+
+    function startTrackLock(track, emp, confidence, now) {
+        const d = track.data;
+        d.empId = emp.id;
+        d.name = emp.name;
+        d.lockedEmpId = emp.id;
+        d.lockedName = emp.name;
+        d.lockStartTs = now;
+        d.lastAcceptedTs = now;
+        d.confidence = confidence;
+        d.captureFrames = [];
+        d.captureDone = false;
+        d.captureFailedReason = '';
+        d.action = null;
+        d.startTs = now;
+        d.livePassed = !settings.liveness;
+        d.phase = 'capturing';
+        d.framingKey = '';
+        d.geometryBuffer = [];
+        d.geometryResult = null;
+        resetLiveness(d);
+    }
+
+    function warnWeakInitialMatch(result) {
+        if (!result || result.status !== 'matched') return;
+        const eid = result.user && result.user.id;
+        const lastWarn = weakMatchWarnedAt.get(eid) || 0;
+        if (Date.now() - lastWarn <= WEAK_MATCH_WARN_MS) return;
+        weakMatchWarnedAt.set(eid, Date.now());
+        console.warn('TMS rejected weak initial face match:', {
+            employeeId: eid,
+            confidence: Number(result.confidence.toFixed(1)),
+            minConfidence: settings.initialMatchConfidence,
+            distance: Number(result.distance.toFixed(4))
+        });
+    }
+
+    function tryInitialLock(track, result, now) {
+        if (!result || result.status !== 'matched' || result.confidence < settings.initialMatchConfidence) {
+            warnWeakInitialMatch(result);
+            return null;
+        }
+        startTrackLock(track, result.user, result.confidence, now);
+        return result.user;
+    }
+
+    function topMatchForDescriptor(descriptor) {
+        if (!matcher || typeof matcher.findTopMatches !== 'function') return null;
+        const top = matcher.findTopMatches(descriptor, 1);
+        return top && top.length ? top[0] : null;
+    }
+
+    function validateLockedTrack(track, det, result, now) {
+        const d = track.data;
+        if (!d || !d.lockedEmpId) return null;
+        let candidate = null;
+        if (result && result.status === 'matched' && result.user && result.user.id === d.lockedEmpId) {
+            candidate = result;
+        } else {
+            const top = topMatchForDescriptor(det.descriptor);
+            if (top && top.user && top.user.id === d.lockedEmpId) {
+                candidate = {
+                    status: 'matched',
+                    user: top.user,
+                    confidence: top.confidence,
+                    distance: top.distance
+                };
+            }
+        }
+        if (!candidate || candidate.confidence < settings.lockedMatchConfidence) return null;
+        d.lastAcceptedTs = now;
+        d.confidence = candidate.confidence;
+        return candidate.user;
+    }
+
+    function captureLockedFrame(track, now) {
+        const d = track.data;
+        if (!Array.isArray(d.captureFrames)) d.captureFrames = [];
+        if (d.captureFrames.length >= VLM_FRAME_COUNT) {
+            d.captureDone = true;
+            return true;
+        }
+        const last = d.captureFrames[d.captureFrames.length - 1];
+        if (last && now - last.t < VLM_FRAME_INTERVAL_MS) return false;
+        const url = grabSendFrame();
+        if (!url) {
+            d.captureFailedReason = 'blank-or-unavailable-frame';
+            return false;
+        }
+        d.captureFrames.push({ t: now, url });
+        d.captureFailedReason = '';
+        d.captureDone = d.captureFrames.length >= VLM_FRAME_COUNT;
+        return d.captureDone;
+    }
+
     async function handleClockFrameMulti(dets) {
         const now = performance.now();
-        captureRingFrame(now);   // 持续填滚动缓冲（1fps），供识别通过那刻取「识别前」的帧送审
+        captureRingFrame(now);   // 兼容维护一份短全局缓冲；打卡送审以 track.captureFrames 为准
         // 1) 把本帧人脸框关联到稳定 track（result[i] ↔ dets[i]）
         const boxes = dets.map(d => d.detection.box);
         const tracks = tracker.update(boxes, now);
@@ -804,39 +942,25 @@
             const track = tracks[i];
             const box = det.detection.box;
             const result = matcher ? matcher.findBestMatch(det.descriptor) : { status: 'unknown' };
+            const d = track.data;
 
-            if (result.status !== 'matched' || result.confidence < MIN_CLOCK_CONFIDENCE) {
-                track.data.empId = null;   // 这张脸暂不认识，清掉旧绑定
-                // 弱匹配告警按员工限流：同一员工每 WEAK_MATCH_WARN_MS 最多一条，避免逐帧刷屏
-                if (result.status === 'matched') {
-                    const eid = result.user && result.user.id;
-                    const lastWarn = weakMatchWarnedAt.get(eid) || 0;
-                    if (Date.now() - lastWarn > WEAK_MATCH_WARN_MS) {
-                        weakMatchWarnedAt.set(eid, Date.now());
-                        console.warn('TMS rejected weak face match:', {
-                            employeeId: eid,
-                            confidence: Number(result.confidence.toFixed(1)),
-                            minConfidence: MIN_CLOCK_CONFIDENCE,
-                            distance: Number(result.distance.toFixed(4))
-                        });
-                    }
+            if (!d.lockedEmpId) {
+                const locked = tryInitialLock(track, result, now);
+                if (!locked) {
+                    resetTrackLock(d, now);
+                    drawList.push({ box, match: null, hold: null });
+                    continue;
                 }
+            }
+
+            const emp = validateLockedTrack(track, det, result, now);
+            if (!emp) {
+                resetTrackLock(d, now);
                 drawList.push({ box, match: null, hold: null });
                 continue;
             }
 
-            const emp = result.user;
-            const d = track.data;
-
-            // track 改绑了不同员工（人换了 / 误识别跳变）→ 重置该 track 的 hold
-            if (d.empId !== emp.id) {
-                d.empId = emp.id; d.name = emp.name;
-                d.action = null; d.startTs = now;
-                d.livePassed = !settings.liveness;
-                d.phase = 'hold';
-                resetLiveness(d);
-            }
-            d.confidence = result.confidence;
+            updateTrackGeometry(track, det, now);
 
             const framing = assessFaceFraming(box, activeVideo.videoWidth, activeVideo.videoHeight);
             if (!framing.ok) {
@@ -845,14 +969,16 @@
                 d.livePassed = false;
                 d.startTs = now;
                 resetLiveness(d);
-                drawList.push({ box, match: { emp, confidence: result.confidence }, hold: d });
-                matchedFaces.push({ track, emp, confidence: result.confidence, box });
+                drawList.push({ box, match: { emp, confidence: d.confidence }, hold: d });
+                matchedFaces.push({ track, emp, confidence: d.confidence, box });
                 continue;
             }
             d.framingKey = '';
 
-            drawList.push({ box, match: { emp, confidence: result.confidence }, hold: d });
-            matchedFaces.push({ track, emp, confidence: result.confidence, box });
+            if (d.phase !== 'done' && d.phase !== 'verifying') d.phase = 'capturing';
+
+            drawList.push({ box, match: { emp, confidence: d.confidence }, hold: d });
+            matchedFaces.push({ track, emp, confidence: d.confidence, box });
 
             // 冷却中：该员工刚打过卡 → 这张脸保持 done 展示 ✓（哪怕是另一张脸/另一个 track）
             const last = cooldown.get(emp.id);
@@ -863,8 +989,7 @@
             }
             // 这张脸已完成本轮打卡；冷却刚到期 → 重置状态，下帧开启新一轮
             if (d.phase === 'done') {
-                d.phase = 'hold'; d.action = null; d.livePassed = false; d.startTs = now;
-                resetLiveness(d);
+                resetTrackLock(d, now);
                 continue;
             }
 
@@ -875,41 +1000,39 @@
                 d.startTs = now;
             }
 
-            // 倒计时(1,2,3 保持不动)期间不被活体拦；滚动缓冲(captureRingFrame)同时持续攒帧。
-            // 活体核验改到「倒计时满」之后，作为打卡前的最后一道闸（弹窗 + 暂停检测，见下）。
+            // 锁定后按该 track 的时间线抓满 VLM_FRAME_COUNT 张；抓满才写记录或送实时 AI。
             d.livePassed = true;
+            const captureDone = captureLockedFrame(track, now);
 
-            // 保持足够时长 → 该打卡了
-            if (now - d.startTs >= HOLD_MS) {
+            // 每个 track 自己攒满 3 张（每张至少间隔 1 秒）后才允许写记录。
+            if (captureDone) {
                 // 同帧/冷却双重去重：同一员工被两张脸同时拍到时只触发一次
                 const c = cooldown.get(emp.id);
                 const inCooldown = c && Date.now() - c < settings.clockCooldownMs;
                 if (inCooldown || clockedThisFrame.has(emp.id)) { d.phase = 'done'; continue; }
+                const captured = d.captureFrames.map(f => f.url).filter(Boolean);
+                if (captured.length < VLM_FRAME_COUNT) { d.phase = 'capturing'; continue; }
 
                 // 实时核验模式：阻塞送审（打卡时弹窗等 AI，慢但当场拦截）
                 if (settings.liveness && settings.livenessMode === 'realtime') {
                     // 已有一次核验在进行（同帧另一张脸刚触发）→ 本帧此脸不再触发
                     if (gating) { d.phase = 'verifying'; continue; }
-                    // 送审必须满 VLM_FRAME_COUNT 张真帧（≈ t-3/-2/-1 秒）。缓冲还没攒够（刚开/重开摄像头、
-                    // 快速走近）→ 不触发、不打卡，继续保持并攒帧，下帧再判，绝不送少于 N 张。
-                    const send = recentRingFrames(now);
-                    if (!send) { d.phase = 'verifying'; continue; }
                     clockedThisFrame.add(emp.id);
                     d.phase = 'verifying';
-                    startLivenessGate(emp, d.action, send, box, track);   // fire-and-forget；gating 接管
+                    startLivenessGate(emp, d.action, captured, box, track);   // fire-and-forget；gating 接管
                     continue;
                 }
 
                 // 先打卡后核验（deferred）/ 关闭防伪：立即打卡，不阻塞。
                 // 所有记录都保存抓拍帧用于记录预览；仅开启 AI 时才标记 pending 进入批量核验。
-                const captured = captureDeferredFrames();
+                d.phase = 'verifying';
                 d.phase = 'done';
                 clockedThisFrame.add(emp.id);
-                if (await doClock(emp, d.action, box, captured)) {
+                if (await doClock(emp, d.action, box, captured, d.geometryResult)) {
                     justClocked = matchedFaces[matchedFaces.length - 1];
                 } else {
-                    // 写库失败 → 回退该 track，下帧重新倒计时
-                    d.phase = 'hold'; d.startTs = now;
+                    // 写库失败 → 保留锁定状态，下帧继续尝试写这 3 张抓拍
+                    d.phase = 'capturing'; d.startTs = now;
                 }
             }
         }
@@ -929,7 +1052,7 @@
         if (target) {
             lastPrimaryId = target.emp.id;
             const d = target.track.data;
-            const phase = d.phase === 'done' ? 'done' : (d.phase === 'verifying' ? 'verifying' : (d.phase === 'framing' ? 'framing' : 'holding'));
+            const phase = d.phase === 'done' ? 'done' : (d.phase === 'verifying' ? 'verifying' : (d.phase === 'framing' ? 'framing' : (d.phase === 'capturing' ? 'capturing' : 'holding')));
             renderClockStatus(target.emp, target.confidence, phase, d);
         } else if (dets.length) {
             lastPrimaryId = null;
@@ -941,7 +1064,8 @@
     }
 
     function renderClockStatus(emp, confidence, phase, hs) {
-        const key = emp.id + ':' + phase + ':' + (hs && hs.framingKey ? hs.framingKey : '');
+        const captureCount = hs && Array.isArray(hs.captureFrames) ? hs.captureFrames.length : 0;
+        const key = emp.id + ':' + phase + ':' + captureCount + ':' + (hs && hs.framingKey ? hs.framingKey : '');
         if (key === lastClockKey) return;
         lastClockKey = key;
 
@@ -954,6 +1078,9 @@
         if (phase === 'done') sub = I18N.t('clock_recorded', { c: confidence.toFixed(0) });
         else if (livenessPhaseKey(phase)) sub = I18N.t(livenessPhaseKey(phase));
         else if (phase === 'framing') sub = I18N.t((hs && hs.framingKey) || 'face_frame_center');
+        else if (phase === 'capturing') {
+            sub = I18N.t('capture_progress', { done: captureCount, total: VLM_FRAME_COUNT });
+        }
         else sub = I18N.t(action === 'in' ? 'hold_to_in' : 'hold_to_out');
 
         el.clockCard.innerHTML = '';
@@ -1006,19 +1133,32 @@
         return 'ontime';
     }
 
-    async function doClock(emp, type, box, frames) {
+    async function doClock(emp, type, box, frames, geometry, vlmVerdict) {
         lastClockKey = null;
         const status = computeStatus(type, Date.now());
         // 抓拍帧用于记录预览；只有延迟 AI 核验开启时才标记 pending，待 HR 事后批量送 AI。
         const hasFrames = Array.isArray(frames) && frames.length > 0;
         const needsDeferredVerify = hasFrames && settings.liveness && settings.livenessMode !== 'realtime';
+        const gp = geometryPatch(geometry);
+        const geometryNeedsReview = settings.liveness && gp.geometrySuspect;
+        const vp = vlmVerdict ? {
+            verifyConfidence: vlmVerdict.confidence,
+            verifyReason: vlmVerdict.reason || '',
+            verifyAttackType: vlmVerdict.attack_type || 'unknown',
+            verifySpoofCues: Array.isArray(vlmVerdict.spoof_cues) ? vlmVerdict.spoof_cues : [],
+            verifyUncertain: !!vlmVerdict.uncertain,
+            verifyVersion: (typeof TmsLiveness !== 'undefined' && TmsLiveness.VLM_PROMPT_VERSION) || 'unknown',
+            verifiedAt: Date.now()
+        } : {};
         // handleClockFrameMulti 是被 await 的，这里不会并发重入；
         // 写库成功后再置冷却 + 反馈，写失败则回退该员工的 hold 让其可重试。
         let saved;
         try {
             saved = await tmsDB.addAttendance({
                 employeeId: emp.id, employeeName: emp.name, type, status,
-                verifyStatus: needsDeferredVerify ? 'pending' : 'none'
+                verifyStatus: needsDeferredVerify ? 'pending' : (geometryNeedsReview ? 'suspect' : (vlmVerdict ? 'real' : 'none')),
+                ...gp,
+                ...vp
             });
         } catch (e) {
             // 写库失败：返回 false，由调用方回退该 track 的 hold 让其重试（不影响其他人）
@@ -1427,6 +1567,9 @@
                 key: 'verifyStatus',
                 value: r => verifyText(r.verifyStatus || 'none'),
                 sortValue: r => r.verifyStatus || 'none',
+                // 过滤值附带原始 token（pending/real/suspect/reviewed/error），
+                // 既支持本地化文字搜索，也支持按 token 精确过滤（避免英文 Review⊂Reviewed 歧义）
+                filterValue: r => { const vs = r.verifyStatus || 'none'; return verifyText(vs) + ' ' + vs; },
                 render: (r, td) => {
                     const vs = r.verifyStatus || 'none';
                     td.className = 'verify-cell verify-' + vs;
@@ -1441,6 +1584,7 @@
         const recs = await tmsDB.getAllAttendance();
         ensureRecordsTable().setData(recs);
         el.recordsSummary.textContent = summarizeHours(recs);
+        updateFilterChips();   // 数据变了 → 刷新快捷筛选条计数 + 重试按钮可见性
     }
 
     function verifyText(vs) {
@@ -1506,7 +1650,11 @@
         return m > 0 ? `${m}:${String(s % 60).padStart(2, '0')}` : `${s}s`;
     }
 
-    async function runBatchVerify() {
+    // onlyStatuses: 限定要处理的核验状态数组（如 ['error'] 只重跑失败）；
+    // 默认处理 pending/error，并重跑旧 VLM prompt 版本的 real/suspect，避免安全规则升级后保留旧误判。
+    async function runBatchVerify(onlyStatuses) {
+        const explicitStatuses = Array.isArray(onlyStatuses);
+        const wanted = explicitStatuses ? onlyStatuses : ['pending', 'error'];
         // 已在跑 → 点击即停（已核验的记录都已落库，停了下次继续）
         if (batchRunning) { batchRunning = false; return; }
         if (!settings.liveness) { toast(I18N.t('verify_engine_off'), 'err'); return; }
@@ -1514,9 +1662,12 @@
         const all = await tmsDB.getAllAttendance();
         // 时间范围：全部 / 仅今天 / 近 7 天 —— 避免每次全库扫，HR 通常只核验近期
         const cutoff = verifyCutoff(el.verifyScope ? el.verifyScope.value : 'all');
-        // pending=从未核验；error=上次失败可重试（LM Studio 之前不可达等）
+        const currentVerifyVersion = (typeof TmsLiveness !== 'undefined' && TmsLiveness.VLM_PROMPT_VERSION) || 'unknown';
+        // pending=从未核验；error=上次失败可重试；默认按钮也会重跑旧 prompt 版本的 real/suspect。
         const queue = all.filter(r =>
-            (r.verifyStatus === 'pending' || r.verifyStatus === 'error') && r.timestamp >= cutoff);
+            r.timestamp >= cutoff &&
+            (wanted.includes(r.verifyStatus) ||
+                (!explicitStatuses && (r.verifyStatus === 'real' || r.verifyStatus === 'suspect') && r.verifyVersion !== currentVerifyVersion)));
         if (!queue.length) { toast(I18N.t('verify_none_pending'), 'ok'); return; }
 
         const eng = await ensureLiveness();
@@ -1541,14 +1692,28 @@
             }
             try {
                 const v = await eng.verify(frames);          // {real, confidence, reason}
-                if (v.real && v.confidence >= settings.livenessRealProb) {
+                const geometrySuspect = !!r.geometrySuspect;
+                const isReal = v.real && v.confidence >= settings.livenessRealProb && !v.uncertain && !geometrySuspect;
+                const verifyPatch = {
+                    verifyStatus: isReal ? 'real' : 'suspect',
+                    verifyConfidence: v.confidence,
+                    verifyReason: v.reason,
+                    verifyAttackType: v.attack_type || 'unknown',
+                    verifySpoofCues: Array.isArray(v.spoof_cues) ? v.spoof_cues : [],
+                    verifyUncertain: !!v.uncertain,
+                    verifyVersion: currentVerifyVersion,
+                    verifiedAt: Date.now()
+                };
+                if (isReal) {
                     await tmsDB.updateAttendanceVerify(r.recordId, {
-                        verifyStatus: 'real', verifyConfidence: v.confidence, verifyReason: v.reason, verifiedAt: Date.now()
+                        ...verifyPatch,
+                        ...geometryPatch(r)
                     });
                     // 保留抓拍帧：记录表任意记录都可点开查看当时画面。
                 } else {
                     await tmsDB.updateAttendanceVerify(r.recordId, {
-                        verifyStatus: 'suspect', verifyConfidence: v.confidence, verifyReason: v.reason, verifiedAt: Date.now()
+                        ...verifyPatch,
+                        ...geometryPatch(r)
                     });
                     flagged++;                               // 保留帧供 HR 复核
                 }
@@ -1568,11 +1733,96 @@
         setVerifyProgress(null);
         toast(I18N.t('verify_done', { done, flagged }), flagged ? 'err' : 'ok');
         await renderRecords();
-        // 完成后若有疑似记录 → 自动把记录表过滤到「需复核」，HR 一键看到该处理的
-        if (flagged > 0 && el.recordsFilter) {
-            el.recordsFilter.value = I18N.t('verify_suspect');
-            el.recordsFilter.dispatchEvent(new Event('input'));
+        // 完成后若有疑似记录 → 自动把记录表过滤到「需复核」，HR 一键看到该处理的。
+        // 用原始 token 'suspect' 精确过滤（中英都不误匹配 reviewed/已复核）。
+        if (flagged > 0) applySuspectFilter();
+    }
+
+    // ---------- 失败自动重试：LM Studio 健康恢复后后台补跑 error ----------
+    // 边沿触发：健康从「未知/不可达」→「可达」且存在 error 记录时，自动跑一次 ['error']。
+    // 用边沿（而非每次可达都跑）避免某条帧损坏永远失败导致无限重试。
+    let autoRetryTimer = null;
+    let lastHealthOk = null;                 // null=未知 | true | false
+    const AUTO_RETRY_INTERVAL_MS = 30000;
+
+    function startAutoRetryPoll() {
+        if (autoRetryTimer) return;
+        lastHealthOk = null;
+        autoRetryTimer = setInterval(autoRetryTick, AUTO_RETRY_INTERVAL_MS);
+    }
+    function stopAutoRetryPoll() {
+        if (autoRetryTimer) { clearInterval(autoRetryTimer); autoRetryTimer = null; }
+        lastHealthOk = null;
+    }
+    async function autoRetryTick() {
+        if (!settings.autoRetry || !settings.liveness || batchRunning) return;
+        const all = await tmsDB.getAllAttendance();
+        if (!all.some(r => r.verifyStatus === 'error')) { lastHealthOk = null; return; }  // 无失败 → 重置边沿
+        const eng = await ensureLiveness();
+        let ok = false;
+        if (eng) { try { ok = await eng.health(); } catch (e) { ok = false; } }   // 每次实测当前健康
+        if (ok && lastHealthOk !== true) {        // 不可达/未知 → 可达 的上升沿
+            toast(I18N.t('auto_retry_running'), 'ok');
+            await runBatchVerify(['error']);
         }
+        lastHealthOk = ok;
+    }
+
+    // 快捷筛选条：可点击过滤的「待处理」状态 + 只读展示的「已完成」状态
+    const FILTER_STATUSES = ['pending', 'suspect', 'error'];        // 可点击
+    const DONE_STATUSES = ['real', 'reviewed'];                     // 只读计数（灰显）
+    const STATUS_ICON = { pending: 'hourglass', suspect: 'alert', error: 'x-circle', real: 'check-circle', reviewed: 'user-check' };
+
+    // 当前搜索框是否正按某个状态 token 过滤
+    function activeStatusFilter() {
+        const v = el.recordsFilter ? el.recordsFilter.value.trim().toLowerCase() : '';
+        return FILTER_STATUSES.includes(v) ? v : '';
+    }
+
+    // 把记录表过滤到某状态（token 精确）；空字符串=清除。批量完成后过滤到 suspect 即调用它。
+    function setStatusFilter(token) {
+        if (el.recordsFilter) {
+            el.recordsFilter.value = token || '';
+            el.recordsFilter.dispatchEvent(new Event('input'));   // 触发 TmsTabular 过滤 + updateFilterChips
+        }
+        updateFilterChips();
+    }
+    function applySuspectFilter() { setStatusFilter('suspect'); }
+
+    // 多状态快捷筛选条：待核验 N / 需复核 N / 失败 N，点击切换；并同步「重试失败」按钮可见性。
+    function updateFilterChips() {
+        if (!el.recordsFilterChip) return;
+        const data = recordsTable ? recordsTable.data : [];
+        const counts = { pending: 0, suspect: 0, error: 0, real: 0, reviewed: 0 };
+        data.forEach(r => { const s = r.verifyStatus || 'none'; if (s in counts) counts[s]++; });
+        const active = activeStatusFilter();
+        const cats = FILTER_STATUSES.filter(k => counts[k] > 0);
+        const doneCats = DONE_STATUSES.filter(k => counts[k] > 0);
+
+        // 「重试失败」按钮：仅有失败记录时显示，带计数
+        if (el.verifyRetryBtn) {
+            el.verifyRetryBtn.style.display = counts.error > 0 ? 'inline-flex' : 'none';
+            const span = el.verifyRetryBtn.querySelector('span');
+            if (span) span.textContent = I18N.t('verify_retry_btn', { n: counts.error });
+        }
+
+        if (!cats.length && !doneCats.length) { el.recordsFilterChip.style.display = 'none'; el.recordsFilterChip.innerHTML = ''; return; }
+        el.recordsFilterChip.style.display = 'flex';
+        let html = cats.map(k =>
+            `<button type="button" class="fchip verify-${k}${active === k ? ' active' : ''}" data-fstatus="${k}">` +
+            `${icon(STATUS_ICON[k])}<span>${verifyText(k)} · ${counts[k]}</span></button>`
+        ).join('');
+        if (active) html += `<button type="button" class="fchip fchip-clear" data-fclear="1">${icon('x-circle')}<span>${I18N.t('filter_clear')}</span></button>`;
+        // 已完成状态：只读计数，灰显不可点（让 HR 也看到「已处理多少」）
+        html += doneCats.map(k =>
+            `<span class="fchip fchip-done verify-${k}">${icon(STATUS_ICON[k])}<span>${verifyText(k)} · ${counts[k]}</span></span>`
+        ).join('');
+        el.recordsFilterChip.innerHTML = html;
+        el.recordsFilterChip.querySelectorAll('[data-fstatus]').forEach(b => {
+            b.onclick = () => { const k = b.dataset.fstatus; setStatusFilter(active === k ? '' : k); };  // 再点同一个=取消
+        });
+        const clr = el.recordsFilterChip.querySelector('[data-fclear]');
+        if (clr) clr.onclick = () => setStatusFilter('');
     }
 
     // ---------- 人工复核弹窗 ----------
@@ -1602,11 +1852,27 @@
         } else {
             el.reviewFrames.textContent = I18N.t('review_no_frames');
         }
-        const conf = rec.verifyConfidence != null ? Math.round(rec.verifyConfidence * 100) + '%' : I18N.t('dash');
-        el.reviewReason.textContent = I18N.t('review_reason', { conf, reason: rec.verifyReason || I18N.t('dash') });
+        el.reviewReason.style.whiteSpace = 'pre-line';
+        el.reviewReason.textContent = reviewAuditText(rec);
         // 只对 AI 标记疑似伪造的记录提供人工放行；其他记录仅预览。
         el.reviewMarkBtn.style.display = (rec.verifyStatus === 'suspect') ? '' : 'none';
         el.reviewModal.classList.add('show');
+    }
+
+    function reviewAuditText(rec) {
+        const conf = rec.verifyConfidence != null ? Math.round(rec.verifyConfidence * 100) + '%' : I18N.t('dash');
+        const cues = Array.isArray(rec.verifySpoofCues) && rec.verifySpoofCues.length
+            ? rec.verifySpoofCues.join(', ')
+            : I18N.t('dash');
+        const geomScore = rec.geometryScore != null ? Number(rec.geometryScore).toFixed(2) : I18N.t('dash');
+        return [
+            I18N.t('review_reason', { conf, reason: rec.verifyReason || I18N.t('dash') }),
+            I18N.t('review_attack_type', { type: rec.verifyAttackType || 'unknown' }),
+            I18N.t('review_spoof_cues', { cues }),
+            I18N.t('review_uncertain', { value: rec.verifyUncertain ? I18N.t('yes') : I18N.t('no') }),
+            I18N.t('review_geometry', { score: geomScore, reason: rec.geometryReason || I18N.t('dash') }),
+            I18N.t('review_version', { version: rec.verifyVersion || I18N.t('dash') })
+        ].join('\n');
     }
     function closeReview() {
         closeImageViewer();
@@ -1646,7 +1912,9 @@
         if (el.imageViewerTitle) el.imageViewerTitle.textContent = imageViewer.title || I18N.t('record_preview');
         if (el.imageViewerImg) {
             el.imageViewerImg.src = total ? imageViewer.frames[index] : '';
-            el.imageViewerImg.style.transform = `scale(${zoom})`;
+            el.imageViewerImg.style.width = zoom === 1 ? '' : `${zoom * 100}%`;
+            el.imageViewerImg.style.maxWidth = zoom === 1 ? '100%' : 'none';
+            el.imageViewerImg.style.maxHeight = zoom === 1 ? '100%' : 'none';
         }
         if (el.imageViewerCounter) el.imageViewerCounter.textContent = I18N.t('image_viewer_counter', { n: total ? index + 1 : 0, total });
         if (el.imageViewerZoomLabel) el.imageViewerZoomLabel.textContent = Math.round(zoom * 100) + '%';
@@ -1707,7 +1975,7 @@
         if (!table.data.length) table.setData(await tmsDB.getAllAttendance());
         const recs = table.exportRows();
         if (!recs.length) { toast(I18N.t('no_records'), 'err'); return; }
-        const rows = [['employeeId', 'employeeName', 'type', 'datetime', 'status', 'verification', 'ai_confidence', 'ai_reason']];
+        const rows = [['employeeId', 'employeeName', 'type', 'datetime', 'status', 'verification', 'ai_confidence', 'ai_reason', 'attack_type', 'spoof_cues', 'uncertain', 'verify_version', 'geometry_score', 'geometry_reason']];
         recs.forEach(r => {
             rows.push([
                 r.employeeId,
@@ -1718,7 +1986,13 @@
                 r.verifyStatus || 'none',
                 // AI 核验留痕：置信度（%）+ 理由，供 HR 存档审计「为何被标记/放行」
                 r.verifyConfidence != null ? Math.round(r.verifyConfidence * 100) + '%' : '',
-                r.verifyReason || ''
+                r.verifyReason || '',
+                r.verifyAttackType || 'unknown',
+                Array.isArray(r.verifySpoofCues) ? r.verifySpoofCues.join('|') : '',
+                r.verifyUncertain ? 'true' : 'false',
+                r.verifyVersion || '',
+                r.geometryScore != null ? Number(r.geometryScore).toFixed(3) : '',
+                r.geometryReason || ''
             ]);
         });
         const csv = rows.map(r => r.map(csvCell).join(',')).join('\n');
@@ -1849,14 +2123,26 @@
     // ============================================================
     function applySettingsToUi() {
         if (!el.thresholdInput) return;
+        const identity = normalizeIdentitySettings(settings);
+        settings.initialMatchConfidence = identity.initialMatchConfidence;
+        settings.lockedMatchConfidence = identity.lockedMatchConfidence;
         applyTheme(settings.theme);
         el.thresholdInput.value = settings.matchThreshold;
         el.thresholdLabel.textContent = I18N.t('threshold_label', { v: settings.matchThreshold.toFixed(2) });
+        if (el.initialMatchInput) {
+            el.initialMatchInput.value = settings.initialMatchConfidence;
+            el.initialMatchLabel.textContent = I18N.t('initial_match_label', { v: settings.initialMatchConfidence });
+        }
+        if (el.lockedMatchInput) {
+            el.lockedMatchInput.value = settings.lockedMatchConfidence;
+            el.lockedMatchLabel.textContent = I18N.t('locked_match_label', { v: settings.lockedMatchConfidence });
+        }
         el.workStartInput.value = settings.workStart;
         el.workEndInput.value = settings.workEnd;
         el.graceInput.value = settings.graceMin;
         if (el.livenessToggle) el.livenessToggle.checked = !!settings.liveness;
         if (el.livenessModeSelect) el.livenessModeSelect.value = settings.livenessMode || 'deferred';
+        if (el.autoRetryToggle) el.autoRetryToggle.checked = !!settings.autoRetry;
         if (el.showLivenessFramesToggle) el.showLivenessFramesToggle.checked = !!settings.showLivenessFrames;
         if (el.realProbInput) {
             el.realProbInput.value = settings.livenessRealProb;
@@ -1913,7 +2199,10 @@
             await renderRecords();
             toast(I18N.t('cleared'), 'ok');
         });
-        if (el.verifyRunBtn) el.verifyRunBtn.addEventListener('click', runBatchVerify);
+        if (el.verifyRunBtn) el.verifyRunBtn.addEventListener('click', () => runBatchVerify());
+        if (el.verifyRetryBtn) el.verifyRetryBtn.addEventListener('click', () => runBatchVerify(['error']));   // 只重跑失败
+        // 手动改搜索框时同步快捷筛选条（清空或改成别的词 → 高亮/计数更新）
+        if (el.recordsFilter) el.recordsFilter.addEventListener('input', updateFilterChips);
         if (el.reviewMarkBtn) el.reviewMarkBtn.addEventListener('click', markReviewed);
         if (el.reviewClose) el.reviewClose.addEventListener('click', closeReview);
         if (el.reviewModal) el.reviewModal.addEventListener('click', (e) => { if (e.target === el.reviewModal) closeReview(); });
@@ -1938,6 +2227,16 @@
                 el.thresholdLabel.textContent = I18N.t('threshold_label', { v: v.toFixed(2) });
                 settings = tmsDB.saveSettings({ matchThreshold: v });
                 if (matcher) matcher.config.matchThreshold = v;
+            });
+        }
+        if (el.initialMatchInput) {
+            el.initialMatchInput.addEventListener('input', () => {
+                saveIdentitySettings({ initialMatchConfidence: el.initialMatchInput.value });
+            });
+        }
+        if (el.lockedMatchInput) {
+            el.lockedMatchInput.addEventListener('input', () => {
+                saveIdentitySettings({ lockedMatchConfidence: el.lockedMatchInput.value });
             });
         }
         el.workStartInput.addEventListener('change', () => { settings = tmsDB.saveSettings({ workStart: el.workStartInput.value || '09:00' }); });
@@ -1967,6 +2266,12 @@
             el.livenessModeSelect.addEventListener('change', () => {
                 const m = el.livenessModeSelect.value === 'realtime' ? 'realtime' : 'deferred';
                 settings = tmsDB.saveSettings({ livenessMode: m });
+            });
+        }
+        if (el.autoRetryToggle) {
+            el.autoRetryToggle.addEventListener('change', () => {
+                settings = tmsDB.saveSettings({ autoRetry: el.autoRetryToggle.checked });
+                if (settings.autoRetry) startAutoRetryPoll(); else stopAutoRetryPoll();
             });
         }
         if (el.showLivenessFramesToggle) {

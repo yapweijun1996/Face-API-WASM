@@ -10,6 +10,12 @@ const test = require('node:test');
 const assert = require('node:assert');
 const L = require('./tms-liveness.js');
 
+test('VLM_PROMPT: exports version and hard phone-screen rule', () => {
+    assert.strictEqual(typeof L.VLM_PROMPT_VERSION, 'string');
+    assert.match(L.VLM_PROMPT, /phone or screen is visible anywhere/i);
+    assert.match(L.VLM_PROMPT, /attack_type="phone_screen"/i);
+});
+
 test('buildMessages: 一条 user 消息，含提示词 + N 张图', () => {
     const frames = ['data:image/jpeg;base64,AAA', 'data:image/jpeg;base64,BBB'];
     const msgs = L.buildMessages(frames, 'PROMPT');
@@ -32,6 +38,9 @@ test('parseVerdict: 纯 JSON', () => {
     const v = L.parseVerdict('{"real": true, "confidence": 0.92, "reason": "live human"}');
     assert.strictEqual(v.real, true);
     assert.ok(Math.abs(v.confidence - 0.92) < 1e-9);
+    assert.strictEqual(v.attack_type, 'unknown');
+    assert.deepStrictEqual(v.spoof_cues, []);
+    assert.strictEqual(v.uncertain, false);
     assert.strictEqual(v.reason, 'live human');
 });
 
@@ -67,6 +76,33 @@ test('parseVerdict: reason 截断到 200 字', () => {
     const long = 'x'.repeat(500);
     const v = L.parseVerdict('{"real":true,"confidence":0.9,"reason":"' + long + '"}');
     assert.strictEqual(v.reason.length, 200);
+});
+
+test('parseVerdict: 新 JSON 字段 attack_type / spoof_cues / uncertain', () => {
+    const v = L.parseVerdict(JSON.stringify({
+        real: false,
+        confidence: 0.18,
+        attack_type: 'phone_screen',
+        spoof_cues: ['screen bezel', 'moire'],
+        uncertain: true,
+        reason: 'visible device'
+    }));
+    assert.strictEqual(v.real, false);
+    assert.strictEqual(v.attack_type, 'phone_screen');
+    assert.deepStrictEqual(v.spoof_cues, ['screen bezel', 'moire']);
+    assert.strictEqual(v.uncertain, true);
+});
+
+test('parseVerdict: spoof_cues 非数组和非法 attack_type 安全兜底', () => {
+    const v = L.parseVerdict('{"real":false,"confidence":0.2,"attack_type":"evil","spoof_cues":"bezel","uncertain":"yes"}');
+    assert.strictEqual(v.attack_type, 'unknown');
+    assert.deepStrictEqual(v.spoof_cues, []);
+    assert.strictEqual(v.uncertain, true);
+});
+
+test('parseVerdict: uncertain 字符串 false/no 解析为 false', () => {
+    assert.strictEqual(L.parseVerdict('{"real":true,"uncertain":"false"}').uncertain, false);
+    assert.strictEqual(L.parseVerdict('{"real":true,"uncertain":"no"}').uncertain, false);
 });
 
 test('VlmLiveness: 默认配置 + endpoint 去尾斜杠', () => {
