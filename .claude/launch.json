@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "tms",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "http.server", "7788", "--directory", "/Users/yapweijun/Documents/GitHub/Face-API-WASM"],
+      "port": 7788
+    },
+    {
+      "name": "faceapi-coop",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["/Users/yapweijun/Documents/GitHub/Face-API-WASM/serve.py", "7790"],
+      "port": 7790
+    }
+  ]
+}
