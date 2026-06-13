@@ -468,7 +468,7 @@
     <!-- 存储配额警告（低于 50 MB 剩余时显示） -->
     <div id="quotaWarning" class="hidden">
         ⚠️ <span id="quotaWarningText">Storage space is low.</span>
-        <button class="quota-dismiss" onclick="document.getElementById('quotaWarning').classList.add('hidden')" aria-label="Dismiss">×</button>
+        <button class="quota-dismiss" onclick="dismissQuotaWarning()" aria-label="Dismiss">×</button>
     </div>
 
     <!-- 用户信息表单 -->
@@ -523,6 +523,7 @@
         <div class="icon">✅</div>
         <h3>Registration Complete!</h3>
         <p id="completionInfo">Successfully captured 20 face samples.</p>
+        <p id="completionTiming" class="hidden" style="font-size:0.85em;color:#888;margin-top:4px;"></p>
         <div class="controls">
             <button id="downloadBtn" class="btn-primary">📥 Download JSON</button>
             <button id="registerAnotherBtn" class="btn-secondary">➕ Register Another</button>
@@ -656,6 +657,11 @@
             console.log(`Warm-up: ${(timing.warmupEnd - timing.warmupStart).toFixed(0)}ms`);
             console.log(`────────────────`);
             console.log(`🚀 Total ready time: ${(timing.totalReady - timing.pageStart).toFixed(0)}ms`);
+            const perfEntries = performance.getEntriesByType('measure').filter(e => e.name.startsWith('face-init:'));
+            if (perfEntries.length > 0) {
+                console.log('📐 PerformanceAPI breakdown:');
+                perfEntries.forEach(e => console.log(`  ⏱️ ${e.name}: ${Math.round(e.duration)}ms`));
+            }
             console.groupEnd();
 
             console.log('\n📝 Current Configuration:', CONFIG);
@@ -692,6 +698,23 @@
             errorModal.classList.remove('visible');
         }
 
+        // 关闭警告条，并在 sessionStorage 记录本次已关闭，
+        // 避免刷新后同一条警告反复弹出。
+        function dismissQuotaWarning() {
+            document.getElementById('quotaWarning').classList.add('hidden');
+            try { sessionStorage.setItem('quotaWarningDismissed', '1'); } catch (_) {}
+        }
+
+        // 只在本次 session 未被关闭、且当前无可见警告时才显示。
+        // 不覆盖更严重的警告（如"空间不足"优先于"非持久"提示）。
+        function showQuotaWarning(text) {
+            if (sessionStorage.getItem('quotaWarningDismissed') === '1') return;
+            const el = document.getElementById('quotaWarning');
+            if (!el.classList.contains('hidden')) return;
+            document.getElementById('quotaWarningText').textContent = text;
+            el.classList.remove('hidden');
+        }
+
         async function checkStorageQuota() {
             if (!navigator.storage || !navigator.storage.estimate) return;
             try {
@@ -700,9 +723,9 @@
                 const WARN_BYTES = 50 * 1024 * 1024; // 50 MB
                 if (remaining < WARN_BYTES) {
                     const mb = (remaining / 1024 / 1024).toFixed(1);
-                    document.getElementById('quotaWarningText').textContent =
-                        `Only ${mb} MB of storage remaining. Registration may fail. Please free up browser storage.`;
-                    document.getElementById('quotaWarning').classList.remove('hidden');
+                    showQuotaWarning(
+                        `Only ${mb} MB of storage remaining. Registration may fail. Please free up browser storage.`
+                    );
                 }
             } catch (_) { /* non-critical */ }
         }
@@ -718,13 +741,7 @@
                     console.log('Persistent storage granted — face data will not be auto-evicted.');
                 } else {
                     console.log('Persistent storage not granted — face data may be evicted under storage pressure.');
-                    const el = document.getElementById('quotaWarning');
-                    const txt = document.getElementById('quotaWarningText');
-                    // 只在配额警告未触发时才更新文字（避免覆盖更严重的"空间不足"信息）
-                    if (el.classList.contains('hidden')) {
-                        txt.textContent = 'Face data is not marked as persistent and may be cleared by the browser.';
-                        el.classList.remove('hidden');
-                    }
+                    showQuotaWarning('Face data is not marked as persistent and may be cleared by the browser.');
                 }
             } catch (_) { /* non-critical */ }
         }
@@ -780,6 +797,7 @@
 
                 // ===== Step 1: Backend Setup =====
                 timing.backendStart = performance.now();
+                performance.mark('face-init:backend-start');
                 setStatus('Setting up WASM backend...');
 
                 const wasmPath = './js/lib/';
@@ -797,10 +815,16 @@
                 }
 
                 timing.backendEnd = performance.now();
+                performance.mark('face-init:backend-end');
+                performance.measure('face-init: Backend setup', {
+                    start: 'face-init:backend-start', end: 'face-init:backend-end',
+                    detail: { backend: backendUsed, model: CONFIG.detection.detectorModel }
+                });
                 logTiming(`Backend setup (${backendUsed})`, timing.backendEnd - timing.backendStart);
 
                 // ===== Step 2: Load Models =====
                 timing.modelsStart = performance.now();
+                performance.mark('face-init:models-start');
                 setStatus('Loading face detection models...');
 
                 const detectorModel = CONFIG.detection.detectorModel;
@@ -821,18 +845,30 @@
                 }
 
                 timing.modelsEnd = performance.now();
+                performance.mark('face-init:models-end');
+                performance.measure('face-init: Model loading', {
+                    start: 'face-init:models-start', end: 'face-init:models-end',
+                    detail: { model: detectorModel, backend: backendUsed }
+                });
                 logTiming('Models loading', timing.modelsEnd - timing.modelsStart);
 
                 // ===== Step 3: Warm-up =====
                 timing.warmupStart = performance.now();
+                performance.mark('face-init:warmup-start');
                 setStatus('Warming up...');
 
                 await warmupOnce();
 
                 timing.warmupEnd = performance.now();
+                performance.mark('face-init:warmup-end');
+                performance.measure('face-init: Warm-up', {
+                    start: 'face-init:warmup-start', end: 'face-init:warmup-end',
+                    detail: { model: detectorModel, backend: backendUsed }
+                });
                 logTiming('Warm-up', timing.warmupEnd - timing.warmupStart);
 
                 // ===== Step 4: Initialize Registration Manager =====
+                performance.mark('face-init:storage-start');
                 await faceStorage.init();
                 registrationManager = new FaceRegistrationManager({
                     maxCaptures: CONFIG.registration.maxCaptures,
@@ -842,6 +878,11 @@
                     autoSaveProgress: true
                 });
                 await registrationManager.init(faceStorage);
+                performance.mark('face-init:storage-end');
+                performance.measure('face-init: Storage init', {
+                    start: 'face-init:storage-start', end: 'face-init:storage-end',
+                    detail: {}
+                });
 
                 // Setup callbacks
                 registrationManager.onProgress = updateProgress;
@@ -856,6 +897,11 @@
 
                 // ===== Done! =====
                 timing.totalReady = performance.now();
+                performance.mark('face-init:done');
+                performance.measure('face-init: Total', {
+                    start: 'face-init:backend-start', end: 'face-init:done',
+                    detail: { backend: backendUsed, model: detectorModel }
+                });
                 logTimingSummary();
 
                 hideSpinner();
@@ -949,6 +995,17 @@
                     model: CONFIG.detection.detectorModel,
                     backend: (typeof faceapi !== 'undefined' && faceapi.tf && faceapi.tf.getBackend) ? faceapi.tf.getBackend() : ''
                 });
+                if (PerfOverlay.isEnabled() && typeof PerformanceObserver !== 'undefined') {
+                    new PerformanceObserver((list) => {
+                        const entries = list.getEntries()
+                            .filter(e => e.name.startsWith('face-init:') && !e.name.includes('Total'));
+                        if (entries.length > 0) {
+                            PerfOverlay.setInfo({
+                                extra: entries.map(e => e.name.replace('face-init: ', '') + ': ' + Math.round(e.duration) + 'ms')
+                            });
+                        }
+                    }).observe({ type: 'measure', buffered: true });
+                }
             }
 
             const loop = async () => {
@@ -1113,6 +1170,10 @@
         }
 
         function onRegistrationComplete(data) {
+            performance.mark('face-reg:complete');
+            try {
+                performance.measure('face-reg: Full registration flow', 'face-init:done', 'face-reg:complete');
+            } catch (_) { /* face-init:done mark absent if init was skipped */ }
             stopCamera();
 
             // Hide registration UI
@@ -1122,6 +1183,19 @@
 
             // Show completion
             completionInfo.textContent = `Successfully captured ${data.descriptorCount} face samples for ${data.userName}.`;
+            const timingEl = document.getElementById('completionTiming');
+            if (timingEl) {
+                const entries = performance.getEntriesByName('face-reg: Full registration flow');
+                if (entries.length > 0) {
+                    const ms = entries[entries.length - 1].duration;
+                    const secs = Math.round(ms / 1000);
+                    const fmt = secs >= 60
+                        ? Math.floor(secs / 60) + 'm ' + (secs % 60) + 's'
+                        : secs > 0 ? secs + 's' : Math.round(ms) + 'ms';
+                    timingEl.textContent = 'Total time: ' + fmt;
+                    timingEl.classList.remove('hidden');
+                }
+            }
             completionSection.classList.remove('hidden');
         }
 

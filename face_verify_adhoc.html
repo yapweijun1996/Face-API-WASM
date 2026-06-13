@@ -536,6 +536,17 @@
             verifyStatusText.parentElement.className = `status-bar ${type}`;
         }
 
+        // 申请持久存储权限，提升整站参与度分值，有助于 face_register.html 获得 grant。
+        async function requestPersistentStorage() {
+            if (!navigator.storage || !navigator.storage.persist) return;
+            try {
+                const granted = await navigator.storage.persist();
+                console.log(granted
+                    ? 'Persistent storage granted for this origin.'
+                    : 'Persistent storage not granted.');
+            } catch (_) { /* non-critical */ }
+        }
+
         function friendlyStorageError(err) {
             const msg = (err && err.message) || String(err);
             if (/QuotaExceeded|quota/i.test(msg)) {
@@ -609,6 +620,7 @@
 
                 console.log('🚀 Starting Face API initialization...');
                 const initStart = performance.now();
+                performance.mark('face-init:backend-start');
 
                 // Setup WASM backend
                 const backendStart = performance.now();
@@ -629,10 +641,16 @@
                 }
 
                 const backendEnd = performance.now();
+                performance.mark('face-init:backend-end');
+                performance.measure('face-init: Backend setup', {
+                    start: 'face-init:backend-start', end: 'face-init:backend-end',
+                    detail: { backend: backendUsed, model: CONFIG.detection.detectorModel }
+                });
                 console.log(`⏱️ Backend setup (${backendUsed}): ${(backendEnd - backendStart).toFixed(0)}ms`);
 
                 // Load models based on selected detector
                 setVerifyStatus('Loading models...');
+                performance.mark('face-init:models-start');
                 const modelsStart = performance.now();
                 const detectorModel = CONFIG.detection.detectorModel;
                 console.log(`🔧 Using detector model: ${detectorModel}`);
@@ -661,13 +679,24 @@
                 }
 
                 const modelsEnd = performance.now();
+                performance.mark('face-init:models-end');
+                performance.measure('face-init: Model loading', {
+                    start: 'face-init:models-start', end: 'face-init:models-end',
+                    detail: { model: detectorModel, backend: backendUsed }
+                });
                 console.log(`⏱️ Models loading: ${(modelsEnd - modelsStart).toFixed(0)}ms`);
 
                 // Warm-up
                 setVerifyStatus('Warming up...');
+                performance.mark('face-init:warmup-start');
                 const warmupStart = performance.now();
                 await warmupOnce();
                 const warmupEnd = performance.now();
+                performance.mark('face-init:warmup-end');
+                performance.measure('face-init: Warm-up', {
+                    start: 'face-init:warmup-start', end: 'face-init:warmup-end',
+                    detail: { model: detectorModel, backend: backendUsed }
+                });
                 console.log(`⏱️ Warm-up: ${(warmupEnd - warmupStart).toFixed(0)}ms`);
 
                 // Initialize matcher
@@ -676,15 +705,24 @@
                     highConfidenceThreshold: CONFIG.matching.highConfidenceThreshold,
                 });
 
+                performance.mark('face-init:done');
+                performance.measure('face-init: Total', {
+                    start: 'face-init:backend-start', end: 'face-init:done',
+                    detail: { backend: backendUsed, model: detectorModel }
+                });
                 const totalTime = performance.now() - initStart;
                 console.log('────────────────────────────────');
                 console.log(`🚀 Total initialization time: ${totalTime.toFixed(0)}ms`);
                 console.log('────────────────────────────────');
+                performance.getEntriesByType('measure')
+                    .filter(e => e.name.startsWith('face-init:'))
+                    .forEach(e => console.log(`  ⏱️ ${e.name}: ${Math.round(e.duration)}ms`));
 
                 faceApiReady = true;
                 verifySpinner.classList.add('hidden');
                 setVerifyStatus('Ready! Upload reference photos to begin.', 'success');
                 updateImageCount();
+                requestPersistentStorage();
 
             } catch (error) {
                 console.error('❌ Init error:', error);

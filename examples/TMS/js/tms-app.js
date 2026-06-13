@@ -89,14 +89,21 @@
         out: '#f43f5e',
         accent: '#22d3ee',
         warn: '#fbbf24',
-        unmatched: 'rgba(148,163,184,.75)'
+        unmatched: 'rgba(148,163,184,.75)',
+        overlayPanel: 'rgba(15,23,42,.85)',
+        overlayText: '#fff',
+        overlayTrack: 'rgba(255,255,255,.25)',
+        celebrateIn: '#4ade80',
+        celebrateLime: '#a3e635',
+        celebrateOut: '#fb7185'
     };
     // canvas 未镜像、视频 CSS 镜像：把检测坐标的 x 翻转过来对齐镜像画面
     const mirrorX = (overlayW, x, w) => overlayW - x - w;
 
     const detectorOptions = () => new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.5 });
 
-    // Local demo-only challenge. Production PAD/liveness must use a certified SDK/service.
+    // Random action challenges (blink/smile/head-turn/etc.) are banned for this project.
+    // Stronger PAD should use passive VLM review, HR review, or a certified SDK/service.
 
     // ---------- DOM ----------
     const $ = (id) => document.getElementById(id);
@@ -104,7 +111,7 @@
     function cacheDom() {
         [
             'bootOverlay', 'bootStatus', 'toast', 'updateBanner', 'reloadBtn',
-            'clockVideo', 'clockOverlay', 'clockCard', 'clockHint', 'empCountPill', 'langBtn',
+            'clockVideo', 'clockOverlay', 'clockCard', 'clockHint', 'empCountPill', 'langBtn', 'themeBtn',
             'empList', 'empName', 'empDept', 'enrollBtn', 'empEmpty',
             'enrollModal', 'enrollVideo', 'enrollOverlay', 'enrollBar', 'enrollText',
             'enrollThumbs', 'enrollCancel', 'enrollTitle',
@@ -113,7 +120,7 @@
             'recordsFilter', 'recordsPageSize', 'recordsPrevBtn', 'recordsNextBtn', 'recordsPageInfo',
             'thresholdInput', 'thresholdVal', 'thresholdLabel', 'livenessToggle',
             'vlmFields', 'livenessModeSelect', 'showLivenessFramesToggle', 'realProbLabel', 'realProbVal', 'realProbInput', 'vlmEndpointInput', 'vlmModelInput',
-            'verifyRunBtn', 'verifyProgress', 'reviewModal', 'reviewTitle', 'reviewFrames', 'reviewReason', 'reviewMarkBtn', 'reviewClose',
+            'verifyRunBtn', 'verifyScope', 'verifyProgress', 'verifyBar', 'verifyProgressText', 'reviewModal', 'reviewTitle', 'reviewFrames', 'reviewReason', 'reviewMarkBtn', 'reviewClose',
             'soundToggle', 'soundFields', 'speakToggle', 'voiceSelect', 'voiceTestBtn', 'voiceFields',
             'livenessModal', 'lmCard', 'lmBadge', 'lmTitle', 'lmSub', 'lmBar', 'lmFrames',
             'workStartInput', 'workEndInput', 'graceInput',
@@ -128,11 +135,42 @@
         return `<svg class="${cls}"><use href="#i-${name}"></use></svg>`;
     }
 
+    function normalizeTheme(theme) {
+        return theme === 'light' ? 'light' : 'dark';
+    }
+
+    function applyTheme(theme) {
+        const next = normalizeTheme(theme);
+        document.documentElement.dataset.theme = next;
+        const css = getComputedStyle(document.documentElement);
+        COLORS.in = css.getPropertyValue('--in').trim() || COLORS.in;
+        COLORS.out = css.getPropertyValue('--out').trim() || COLORS.out;
+        COLORS.accent = css.getPropertyValue('--accent').trim() || COLORS.accent;
+        COLORS.warn = css.getPropertyValue('--warn').trim() || COLORS.warn;
+        COLORS.unmatched = css.getPropertyValue('--muted').trim() || COLORS.unmatched;
+        COLORS.overlayPanel = css.getPropertyValue('--overlay-panel').trim() || COLORS.overlayPanel;
+        COLORS.overlayText = css.getPropertyValue('--overlay-text').trim() || COLORS.overlayText;
+        COLORS.overlayTrack = css.getPropertyValue('--overlay-track').trim() || COLORS.overlayTrack;
+        COLORS.celebrateIn = css.getPropertyValue('--celebrate-in').trim() || COLORS.celebrateIn;
+        COLORS.celebrateLime = css.getPropertyValue('--celebrate-lime').trim() || COLORS.celebrateLime;
+        COLORS.celebrateOut = css.getPropertyValue('--celebrate-out').trim() || COLORS.celebrateOut;
+        const meta = document.querySelector('meta[name="theme-color"]');
+        if (meta) meta.content = next === 'light' ? '#f8fafc' : '#0f172a';
+        if (el.themeBtn) {
+            const iconName = next === 'light' ? 'moon' : 'sun';
+            el.themeBtn.innerHTML = icon(iconName);
+            el.themeBtn.setAttribute('aria-label', I18N.t(next === 'light' ? 'theme_switch_dark' : 'theme_switch_light'));
+            el.themeBtn.title = I18N.t(next === 'light' ? 'theme_switch_dark' : 'theme_switch_light');
+        }
+    }
+
     // ============================================================
     // 初始化
     // ============================================================
     async function boot() {
         cacheDom();
+        settings.theme = normalizeTheme(settings.theme);
+        applyTheme(settings.theme);
         TmsModal.init({ root: el.appModal, i18n: I18N, icon });
         I18N.apply();
         el.langBtn.textContent = I18N.other;
@@ -607,8 +645,8 @@
     function spawnCelebration(cx, cy, type) {
         if (particles.length > 320) return;   // 多人同时打卡时给粒子数封顶
         const palette = type === 'in'
-            ? [COLORS.in, '#4ade80', COLORS.accent, '#a3e635']
-            : [COLORS.out, '#fb7185', COLORS.accent, '#fbbf24'];
+            ? [COLORS.in, COLORS.celebrateIn, COLORS.accent, COLORS.celebrateLime]
+            : [COLORS.out, COLORS.celebrateOut, COLORS.accent, COLORS.warn];
         for (let i = 0; i < 40; i++) {
             const ang = Math.random() * Math.PI * 2;
             const speed = 2 + Math.random() * 6;
@@ -670,9 +708,9 @@
         const label = match.emp.name;
         ctx.font = '600 18px -apple-system, "PingFang SC", sans-serif';
         const tw = ctx.measureText(label).width;
-        ctx.fillStyle = 'rgba(15,23,42,.85)';
+        ctx.fillStyle = COLORS.overlayPanel;
         ctx.fillRect(x, y - 30, tw + 16, 26);
-        ctx.fillStyle = '#fff';
+        ctx.fillStyle = COLORS.overlayText;
         ctx.fillText(label, x + 8, y - 11);
 
         if (!hs) return;
@@ -688,7 +726,7 @@
             hint = I18N.t(hs.action === 'in' ? 'clock_in_btn' : 'clock_out_btn');
         }
         ctx.beginPath(); ctx.arc(cx, cy, rad, 0, Math.PI * 2);
-        ctx.strokeStyle = 'rgba(255,255,255,.25)'; ctx.lineWidth = 4; ctx.stroke();
+        ctx.strokeStyle = COLORS.overlayTrack; ctx.lineWidth = 4; ctx.stroke();
         ctx.beginPath(); ctx.arc(cx, cy, rad, -Math.PI / 2, -Math.PI / 2 + prog * Math.PI * 2);
         ctx.strokeStyle = color; ctx.lineWidth = 4; ctx.lineCap = 'round'; ctx.stroke();
         if (hs.phase === 'done') {
@@ -705,7 +743,7 @@
         if (hint) {
             ctx.font = '600 15px -apple-system, sans-serif';
             const hw = ctx.measureText(hint).width;
-            ctx.fillStyle = 'rgba(15,23,42,.85)';
+            ctx.fillStyle = COLORS.overlayPanel;
             ctx.fillRect(x, y + b.height + 6, hw + 16, 24);
             ctx.fillStyle = color;
             ctx.fillText(hint, x + 8, y + b.height + 23);
@@ -716,7 +754,7 @@
             const txt = 'live ' + hs.realProb.toFixed(2);
             ctx.font = '600 13px -apple-system, sans-serif';
             const rw = ctx.measureText(txt).width;
-            ctx.fillStyle = 'rgba(15,23,42,.85)';
+            ctx.fillStyle = COLORS.overlayPanel;
             ctx.fillRect(x, y - 30 - 22, rw + 14, 20);
             ctx.fillStyle = (hs.realProb < settings.livenessRealProb) ? COLORS.warn : COLORS.in;
             ctx.fillText(txt, x + 7, y - 30 - 7);
@@ -1327,9 +1365,11 @@
             nextBtn: el.recordsNextBtn,
             pageInfo: el.recordsPageInfo,
             sortButtons: document.querySelectorAll('[data-record-sort]'),
-            sortKey: 'timestamp',
+            sortKey: 'date',
             sortDir: 'desc',
             pageInfoText: ({ start, end, total, page, pages }) => I18N.t('records_page_info', { start, end, total, page, pages }),
+            rowTitle: () => I18N.t('record_preview'),
+            onRowClick: openReview,
             columns: recordColumns()
         });
         return recordsTable;
@@ -1389,11 +1429,7 @@
                     const vs = r.verifyStatus || 'none';
                     td.className = 'verify-cell verify-' + vs;
                     td.innerHTML = verifyBadge(vs);
-                    if (vs === 'suspect' || vs === 'reviewed') {
-                        td.setAttribute('role', 'button');
-                        td.title = I18N.t('review_title');
-                        td.onclick = () => openReview(r);
-                    }
+                    td.title = I18N.t('record_preview');
                 }
             }
         ];
@@ -1435,11 +1471,37 @@
     // ============================================================
     let batchRunning = false;
 
-    function setVerifyProgress(text) {
+    // 批量核验时间范围 → 起始时间戳（含）。today=今天 00:00；week=近 7 天 00:00；all=不限。
+    function verifyCutoff(scope) {
+        if (scope === 'today') { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime(); }
+        if (scope === 'week') { const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - 6); return d.getTime(); }
+        return -Infinity;   // all
+    }
+
+    // 进度条 + 文案 + 预计剩余。done=null → 隐藏；etaMs=null → 不显示剩余时间（首条还没数据）。
+    function setVerifyProgress(done, total, etaMs) {
         if (!el.verifyProgress) return;
-        if (!text) { el.verifyProgress.style.display = 'none'; el.verifyProgress.textContent = ''; return; }
+        if (done == null) {
+            el.verifyProgress.style.display = 'none';
+            if (el.verifyBar) el.verifyBar.style.width = '0%';
+            if (el.verifyProgressText) el.verifyProgressText.textContent = '';
+            return;
+        }
         el.verifyProgress.style.display = 'block';
-        el.verifyProgress.textContent = text;
+        const pct = total ? Math.round(done / total * 100) : 0;
+        if (el.verifyBar) el.verifyBar.style.width = pct + '%';
+        if (el.verifyProgressText) {
+            el.verifyProgressText.textContent = (etaMs != null)
+                ? I18N.t('verify_progress_eta', { done, total, eta: fmtEta(etaMs) })
+                : I18N.t('verify_progress', { done, total });
+        }
+    }
+
+    // 毫秒 → 简短倒计时文案：>=60s 用 "M:SS"，否则 "Ss"（语种中立）
+    function fmtEta(ms) {
+        const s = Math.max(0, Math.round(ms / 1000));
+        const m = Math.floor(s / 60);
+        return m > 0 ? `${m}:${String(s % 60).padStart(2, '0')}` : `${s}s`;
     }
 
     async function runBatchVerify() {
@@ -1448,8 +1510,11 @@
         if (!settings.liveness) { toast(I18N.t('verify_engine_off'), 'err'); return; }
 
         const all = await tmsDB.getAllAttendance();
+        // 时间范围：全部 / 仅今天 / 近 7 天 —— 避免每次全库扫，HR 通常只核验近期
+        const cutoff = verifyCutoff(el.verifyScope ? el.verifyScope.value : 'all');
         // pending=从未核验；error=上次失败可重试（LM Studio 之前不可达等）
-        const queue = all.filter(r => r.verifyStatus === 'pending' || r.verifyStatus === 'error');
+        const queue = all.filter(r =>
+            (r.verifyStatus === 'pending' || r.verifyStatus === 'error') && r.timestamp >= cutoff);
         if (!queue.length) { toast(I18N.t('verify_none_pending'), 'ok'); return; }
 
         const eng = await ensureLiveness();
@@ -1458,9 +1523,12 @@
         batchRunning = true;
         if (el.verifyRunBtn) el.verifyRunBtn.querySelector('span').textContent = I18N.t('verify_stop_btn');
         let done = 0, flagged = 0;
+        const t0 = performance.now();
         for (const r of queue) {
             if (!batchRunning) break;                       // 可中断
-            setVerifyProgress(I18N.t('verify_progress', { done, total: queue.length }));
+            // 预计剩余 = 已用时 / 已完成 × 剩余条数（首条无数据时不显示）
+            const eta = done > 0 ? ((performance.now() - t0) / done) * (queue.length - done) : null;
+            setVerifyProgress(done, queue.length, eta);
             const frames = await tmsDB.getFrames(r.recordId);
             if (!frames || !frames.length) {                // 没帧可核验 → 归为 none，不再排队
                 await tmsDB.updateAttendanceVerify(r.recordId, { verifyStatus: 'none' });
@@ -1487,7 +1555,7 @@
         }
         batchRunning = false;
         if (el.verifyRunBtn) el.verifyRunBtn.querySelector('span').textContent = I18N.t('verify_run_btn');
-        setVerifyProgress('');
+        setVerifyProgress(null);
         toast(I18N.t('verify_done', { done, flagged }), flagged ? 'err' : 'ok');
         await renderRecords();
     }
@@ -1507,8 +1575,8 @@
         }
         const conf = rec.verifyConfidence != null ? Math.round(rec.verifyConfidence * 100) + '%' : I18N.t('dash');
         el.reviewReason.textContent = I18N.t('review_reason', { conf, reason: rec.verifyReason || I18N.t('dash') });
-        // 已复核的记录不再提供「标记」按钮
-        el.reviewMarkBtn.style.display = (rec.verifyStatus === 'reviewed') ? 'none' : '';
+        // 只对 AI 标记疑似伪造的记录提供人工放行；其他记录仅预览。
+        el.reviewMarkBtn.style.display = (rec.verifyStatus === 'suspect') ? '' : 'none';
         el.reviewModal.classList.add('show');
     }
     function closeReview() { if (el.reviewModal) el.reviewModal.classList.remove('show'); reviewRec = null; }
@@ -1548,11 +1616,23 @@
     }
 
     async function exportCsv() {
-        const recs = await tmsDB.getAllAttendance();
+        const table = ensureRecordsTable();
+        if (!table.data.length) table.setData(await tmsDB.getAllAttendance());
+        const recs = table.exportRows();
         if (!recs.length) { toast(I18N.t('no_records'), 'err'); return; }
-        const rows = [['employeeId', 'employeeName', 'type', 'datetime']];
-        recs.slice().reverse().forEach(r => {
-            rows.push([r.employeeId, r.employeeName, r.type, new Date(r.timestamp).toISOString()]);
+        const rows = [['employeeId', 'employeeName', 'type', 'datetime', 'status', 'verification', 'ai_confidence', 'ai_reason']];
+        recs.forEach(r => {
+            rows.push([
+                r.employeeId,
+                r.employeeName,
+                r.type,
+                new Date(r.timestamp).toISOString(),
+                r.status || 'ontime',
+                r.verifyStatus || 'none',
+                // AI 核验留痕：置信度（%）+ 理由，供 HR 存档审计「为何被标记/放行」
+                r.verifyConfidence != null ? Math.round(r.verifyConfidence * 100) + '%' : '',
+                r.verifyReason || ''
+            ]);
         });
         const csv = rows.map(r => r.map(csvCell).join(',')).join('\n');
         const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
@@ -1682,6 +1762,7 @@
     // ============================================================
     function applySettingsToUi() {
         if (!el.thresholdInput) return;
+        applyTheme(settings.theme);
         el.thresholdInput.value = settings.matchThreshold;
         el.thresholdLabel.textContent = I18N.t('threshold_label', { v: settings.matchThreshold.toFixed(2) });
         el.workStartInput.value = settings.workStart;
@@ -1714,6 +1795,13 @@
             btn.addEventListener('click', () => switchTab(btn.dataset.tab));
         });
         el.langBtn.addEventListener('click', () => I18N.toggle());
+        if (el.themeBtn) {
+            el.themeBtn.addEventListener('click', () => {
+                const theme = normalizeTheme(settings.theme) === 'dark' ? 'light' : 'dark';
+                settings = tmsDB.saveSettings({ theme });
+                applyTheme(settings.theme);
+            });
+        }
         el.enrollBtn.addEventListener('click', openEnroll);
         el.enrollCancel.addEventListener('click', closeEnroll);
         el.exportCsvBtn.addEventListener('click', exportCsv);

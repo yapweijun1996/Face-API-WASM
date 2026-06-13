@@ -19,6 +19,8 @@ const TmsTabular = (() => {
             this.sortButtons = [...(options.sortButtons || [])];
             this.columns = options.columns || [];
             this.pageInfoText = options.pageInfoText || ((s) => `${s.start}-${s.end} / ${s.total}`);
+            this.onRowClick = typeof options.onRowClick === 'function' ? options.onRowClick : null;
+            this.rowTitle = typeof options.rowTitle === 'function' ? options.rowTitle : null;
             this.data = [];
             this.page = 1;
             this.pageSize = this.pageSizeSelect ? parseInt(this.pageSizeSelect.value, 10) || 10 : 10;
@@ -134,6 +136,22 @@ const TmsTabular = (() => {
 
         renderRow(row) {
             const tr = document.createElement('tr');
+            if (this.onRowClick) {
+                tr.className = 'table-row-clickable';
+                tr.tabIndex = 0;
+                tr.setAttribute('role', 'button');
+                if (this.rowTitle) tr.title = this.rowTitle(row);
+                tr.addEventListener('click', (e) => {
+                    if (isInteractiveTarget(e.target)) return;
+                    this.onRowClick(row);
+                });
+                tr.addEventListener('keydown', (e) => {
+                    if (e.key !== 'Enter' && e.key !== ' ') return;
+                    if (isInteractiveTarget(e.target)) return;
+                    e.preventDefault();
+                    this.onRowClick(row);
+                });
+            }
             this.columns.forEach(col => {
                 const td = document.createElement('td');
                 if (typeof col.render === 'function') col.render(row, td);
@@ -150,6 +168,10 @@ const TmsTabular = (() => {
         if (a == null) return -1;
         if (b == null) return 1;
         return String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' });
+    }
+
+    function isInteractiveTarget(target) {
+        return target && target.closest && target.closest('button,a,input,select,textarea,label');
     }
 
     return { Table };

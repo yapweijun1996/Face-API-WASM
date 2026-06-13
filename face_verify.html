@@ -453,7 +453,7 @@
     <!-- 存储配额警告（低于 50 MB 剩余时显示） -->
     <div id="quotaWarning" class="hidden">
         ⚠️ <span id="quotaWarningText">Storage space is low.</span>
-        <button class="quota-dismiss" onclick="document.getElementById('quotaWarning').classList.add('hidden')" aria-label="Dismiss">×</button>
+        <button class="quota-dismiss" onclick="dismissQuotaWarning()" aria-label="Dismiss">×</button>
     </div>
 
     <!-- 控制面板 -->
@@ -625,6 +625,19 @@
             return 'Failed to access storage: ' + msg;
         }
 
+        function dismissQuotaWarning() {
+            document.getElementById('quotaWarning').classList.add('hidden');
+            try { sessionStorage.setItem('quotaWarningDismissed', '1'); } catch (_) {}
+        }
+
+        function showQuotaWarning(text) {
+            if (sessionStorage.getItem('quotaWarningDismissed') === '1') return;
+            const el = document.getElementById('quotaWarning');
+            if (!el.classList.contains('hidden')) return;
+            document.getElementById('quotaWarningText').textContent = text;
+            el.classList.remove('hidden');
+        }
+
         async function checkStorageQuota() {
             if (!navigator.storage || !navigator.storage.estimate) return;
             try {
@@ -633,9 +646,9 @@
                 const WARN_BYTES = 50 * 1024 * 1024; // 50 MB
                 if (remaining < WARN_BYTES) {
                     const mb = (remaining / 1024 / 1024).toFixed(1);
-                    document.getElementById('quotaWarningText').textContent =
-                        `Only ${mb} MB of storage remaining. Loaded face data may be cleared by the browser. Please free up storage.`;
-                    document.getElementById('quotaWarning').classList.remove('hidden');
+                    showQuotaWarning(
+                        `Only ${mb} MB of storage remaining. Loaded face data may be cleared by the browser. Please free up storage.`
+                    );
                 }
             } catch (_) { /* non-critical */ }
         }
@@ -648,12 +661,7 @@
                     console.log('Persistent storage granted — face data will not be auto-evicted.');
                 } else {
                     console.log('Persistent storage not granted — face data may be evicted under storage pressure.');
-                    const el = document.getElementById('quotaWarning');
-                    const txt = document.getElementById('quotaWarningText');
-                    if (el.classList.contains('hidden')) {
-                        txt.textContent = 'Face data is not marked as persistent and may be cleared by the browser.';
-                        el.classList.remove('hidden');
-                    }
+                    showQuotaWarning('Face data is not marked as persistent and may be cleared by the browser.');
                 }
             } catch (_) { /* non-critical */ }
         }
@@ -795,6 +803,7 @@
 
                 console.log('🚀 Starting Face API initialization...');
                 const initStart = performance.now();
+                performance.mark('face-init:backend-start');
 
                 // Setup WASM backend
                 const backendStart = performance.now();
@@ -815,10 +824,16 @@
                 }
 
                 const backendEnd = performance.now();
+                performance.mark('face-init:backend-end');
+                performance.measure('face-init: Backend setup', {
+                    start: 'face-init:backend-start', end: 'face-init:backend-end',
+                    detail: { backend: backendUsed, model: CONFIG.detection.detectorModel }
+                });
                 console.log(`⏱️ Backend setup (${backendUsed}): ${(backendEnd - backendStart).toFixed(0)}ms`);
 
                 // Load models based on selected detector
                 setStatus('Loading models...');
+                performance.mark('face-init:models-start');
                 const modelsStart = performance.now();
                 const detectorModel = CONFIG.detection.detectorModel;
                 console.log(`🔧 Using detector model: ${detectorModel}`);
@@ -840,13 +855,24 @@
                 }
 
                 const modelsEnd = performance.now();
+                performance.mark('face-init:models-end');
+                performance.measure('face-init: Model loading', {
+                    start: 'face-init:models-start', end: 'face-init:models-end',
+                    detail: { model: detectorModel, backend: backendUsed }
+                });
                 console.log(`⏱️ Models loading: ${(modelsEnd - modelsStart).toFixed(0)}ms`);
 
                 // Warm-up
                 setStatus('Warming up...');
+                performance.mark('face-init:warmup-start');
                 const warmupStart = performance.now();
                 await warmupOnce();
                 const warmupEnd = performance.now();
+                performance.mark('face-init:warmup-end');
+                performance.measure('face-init: Warm-up', {
+                    start: 'face-init:warmup-start', end: 'face-init:warmup-end',
+                    detail: { model: detectorModel, backend: backendUsed }
+                });
                 console.log(`⏱️ Warm-up: ${(warmupEnd - warmupStart).toFixed(0)}ms`);
 
                 // Initialize matcher with settings
@@ -857,10 +883,18 @@
                 });
                 console.log(`✅ FaceMatcher initialized with threshold: ${faceMatcher.config.matchThreshold}`);
 
+                performance.mark('face-init:done');
+                performance.measure('face-init: Total', {
+                    start: 'face-init:backend-start', end: 'face-init:done',
+                    detail: { backend: backendUsed, model: detectorModel }
+                });
                 const totalTime = performance.now() - initStart;
                 console.log('────────────────────────────────');
                 console.log(`🚀 Total initialization time: ${totalTime.toFixed(0)}ms`);
                 console.log('────────────────────────────────');
+                performance.getEntriesByType('measure')
+                    .filter(e => e.name.startsWith('face-init:'))
+                    .forEach(e => console.log(`  ⏱️ ${e.name}: ${Math.round(e.duration)}ms`));
 
                 faceApiReady = true;
                 hideSpinner();
@@ -948,6 +982,17 @@
                     users: faceMatcher.getUserCount(),
                     clusters: faceMatcher.descriptors.length
                 });
+                if (PerfOverlay.isEnabled() && typeof PerformanceObserver !== 'undefined') {
+                    new PerformanceObserver((list) => {
+                        const entries = list.getEntries()
+                            .filter(e => e.name.startsWith('face-init:') && !e.name.includes('Total'));
+                        if (entries.length > 0) {
+                            PerfOverlay.setInfo({
+                                extra: entries.map(e => e.name.replace('face-init: ', '') + ': ' + Math.round(e.duration) + 'ms')
+                            });
+                        }
+                    }).observe({ type: 'measure', buffered: true });
+                }
             }
 
             const loop = async () => {

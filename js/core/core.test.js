@@ -185,6 +185,19 @@ test('formatStats: 缺失字段不输出对应行', () => {
     assert.strictEqual(s, 'FPS: 5');
 });
 
+test('formatStats: extra 数组追加分割线和各行', () => {
+    const s = formatStats({ fps: 10, extra: ['Backend: 42ms', 'Model loading: 300ms'] });
+    assert.match(s, /FPS: 10/);
+    assert.match(s, /──────────/);
+    assert.match(s, /Backend: 42ms/);
+    assert.match(s, /Model loading: 300ms/);
+});
+
+test('formatStats: extra 为空数组时不追加分割线', () => {
+    const s = formatStats({ fps: 10, extra: [] });
+    assert.strictEqual(s, 'FPS: 10');
+});
+
 test('isDebugEnabled: ?debug=1 开启', () => {
     assert.strictEqual(isDebugEnabled({ search: '?debug=1' }, null), true);
     assert.strictEqual(isDebugEnabled({ search: '?foo=1&debug=1' }, null), true);

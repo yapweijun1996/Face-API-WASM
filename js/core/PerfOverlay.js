@@ -43,7 +43,7 @@
 
     /**
      * 把统计量格式化为多行文本（浮层与 canvas 共用）。
-     * @param {{fps?:number, inferenceMs?:number, matchMs?:number, backend?:string, model?:string, users?:number, clusters?:number}} s
+     * @param {{fps?:number, inferenceMs?:number, matchMs?:number, backend?:string, model?:string, users?:number, clusters?:number, extra?:string[]}} s
      * @returns {string}
      */
     function formatStats(s) {
@@ -55,6 +55,10 @@
         if (o.backend) lines.push('Backend: ' + o.backend);
         if (o.model) lines.push('Model: ' + o.model);
         if (o.users != null) lines.push('Users: ' + o.users + (o.clusters != null ? ' (' + o.clusters + ' clusters)' : ''));
+        if (Array.isArray(o.extra) && o.extra.length > 0) {
+            lines.push('──────────');
+            lines.push(...o.extra);
+        }
         return lines.join('\n');
     }
 

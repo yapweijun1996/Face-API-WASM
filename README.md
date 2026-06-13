@@ -282,6 +282,7 @@ Quick summary:
 - ✅ Auto model selection (SSD vs TinyFaceDetector) by device class (`js/core/DeviceProfile.js`)
 - ✅ FPS / inference-time / match-time dev overlay (`js/core/PerfOverlay.js`, enable with `?debug=1`)
 - ⛔ MiniFASNet client-side liveness — **banned** (tested 2026-06-14, does not work). Use the VLM (LM Studio) liveness path only.
+- ⛔ Random action challenge liveness — **banned** (decided 2026-06-14). Do not implement blink / smile / mouth-open / head-turn / random gesture challenge flows.
 
 Run tests: `node --test js/core/core.test.js` (24 tests) and `node --test examples/TMS/js/tms-liveness.test.js` (9 tests).
 

@@ -13,7 +13,7 @@
  *  skipWaiting + controllerchange → 页面自动 reload，运行最新代码。
  */
 
-const VERSION = 'tms-v24';
+const VERSION = 'tms-v27';
 const APP_CACHE = `app-${VERSION}`;
 const STATIC_CACHE = `static-${VERSION}`;
 
@@ -27,6 +27,7 @@ const APP_SHELL = [
     './js/tms-tracker.js',
     './js/tms-liveness.js',
     './js/tms-modal.js',
+    './js/tms-tabular.js',
     './js/tms-app.js'
 ];
 

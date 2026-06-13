@@ -36,7 +36,8 @@ const DEFAULT_SETTINGS = {
     vlmModel: 'minicpm-v-4.6',  // 已加载的视觉模型 id（LM Studio「API Model Identifier」）
     soundEnabled: true,         // 声音提示总控：打卡提示音 + 语音播报的总开关
     speakEnabled: true,         // 子项：打卡时语音播报员工姓名（Web Speech API），受 soundEnabled 约束
-    speakVoiceURI: { en: '', zh: '' }   // 按 UI 语言分槽的 voiceURI；空字符串 = 该语言用浏览器默认
+    speakVoiceURI: { en: '', zh: '' },  // 按 UI 语言分槽的 voiceURI；空字符串 = 该语言用浏览器默认
+    theme: 'dark'               // 'dark' | 'light'
 };
 
 class TmsDB {

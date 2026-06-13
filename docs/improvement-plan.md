@@ -138,6 +138,8 @@ This is good. No change needed.
 
 **⛔ MiniFASNet — BANNED (tested 2026-06-14, does not work).** MiniFASNet was previously suggested as a lightweight client-side FAS fallback. It was tested and **does not work at all** in this browser/WASM setting — do not re-recommend or re-attempt it. The VLM check (MiniCPM-V via LM Studio) is the only sanctioned liveness path. If an offline client-side fallback is needed in future, evaluate other approaches from scratch and validate on real spoof samples before adopting — **not MiniFASNet**.
 
+**⛔ Random action challenge — BANNED (decided 2026-06-14).** Do not add or recommend blink / smile / mouth-open / turn-left / turn-right / nod / random gesture challenge-response flows for this project. They add user friction, slow attendance, are awkward during peak clock-in, and still do not reliably stop prepared replay/deepfake attacks. For this repo, anti-spoofing work should stay on passive full-frame VLM review, face-framing/context capture, deferred HR review, and/or a certified PAD SDK/service if stronger assurance is required.
+
 ---
 
 ## Summary Table
@@ -154,6 +156,7 @@ This is good. No change needed.
 | P2-4 inputSize guide | P2 | Docs only | ✅ This doc |
 | P3-1 IDB versioning | P3 | Pre-plan only | ❌ Future (clusters stored as optional field — no migration needed yet) |
 | ~~P3-3 MiniFASNet liveness~~ | ~~P3~~ | — | ⛔ BANNED — tested 2026-06-14, does not work. Do not re-attempt. |
+| ~~Random action challenge liveness~~ | ~~P3~~ | — | ⛔ BANNED — decided 2026-06-14. Do not implement blink/gesture/head-turn challenge flows. |
 
 ---
 
