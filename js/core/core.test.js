@@ -14,7 +14,7 @@ require('./utils.js');
 const { computeKMeans } = require('./FaceRegistrationManager.js');
 const { FaceMatcher, MatchResult } = require('./FaceMatcher.js');
 const { recommendDetectorModel } = require('./DeviceProfile.js');
-const { fpsFromTimestamps, pruneTimestamps, formatStats, isDebugEnabled } = require('./PerfOverlay.js');
+const { fpsFromTimestamps, pruneTimestamps, formatStats, isDebugEnabled, buildExtraLines } = require('./PerfOverlay.js');
 
 // ---------- helpers ----------
 function vec(dim, fill) { const a = new Float32Array(dim); a.fill(fill); return a; }
@@ -245,4 +245,29 @@ test('debounce: _cancelScheduledSave 阻止写盘（清理竞态防护）', asyn
     mgr._cancelScheduledSave();   // 模拟 cancel()/finalize() 取消
     await new Promise(r => setTimeout(r, 90));
     assert.strictEqual(writes, 0, '取消后不应写盘');
+});
+
+// ============ buildExtraLines ============
+test('buildExtraLines: 过滤 face- 前缀、排除 Total、去掉命名空间', () => {
+    const fake = {
+        getEntriesByType: () => [
+            { name: 'face-init: Backend setup', duration: 123.7 },
+            { name: 'face-init: Model loading', duration: 800 },
+            { name: 'face-init: Total', duration: 999 },
+            { name: 'face-reg: Full registration flow', duration: 456.2 },
+            { name: 'other: Unrelated', duration: 10 },
+        ]
+    };
+    const lines = buildExtraLines(fake);
+    assert.deepStrictEqual(lines, [
+        'Backend setup: 124ms',
+        'Model loading: 800ms',
+        'Full registration flow: 456ms'
+    ]);
+});
+
+test('buildExtraLines: perfApi 无效时返回空数组', () => {
+    assert.deepStrictEqual(buildExtraLines(null), []);
+    assert.deepStrictEqual(buildExtraLines({ getEntriesByType: null }), []);
+    assert.deepStrictEqual(buildExtraLines({}), []);
 });

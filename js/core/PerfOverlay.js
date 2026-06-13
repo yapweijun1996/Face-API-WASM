@@ -62,6 +62,19 @@
         return lines.join('\n');
     }
 
+    /**
+     * 从 PerformanceTimeline 读取 face-* measures，返回 overlay extra 行数组。
+     * @param {Performance} [perfApi] 可注入（测试用）；省略时用全局 performance。
+     * @returns {string[]}
+     */
+    function buildExtraLines(perfApi) {
+        const p = perfApi || (typeof performance !== 'undefined' ? performance : null);
+        if (!p || typeof p.getEntriesByType !== 'function') return [];
+        return p.getEntriesByType('measure')
+            .filter(e => e.name.startsWith('face-') && !e.name.includes('Total'))
+            .map(e => e.name.replace(/^face-(?:init|reg): /, '') + ': ' + Math.round(e.duration) + 'ms');
+    }
+
     /** 是否启用 debug 浮层（URL ?debug=1 或 localStorage faceDebug=1）。 */
     function isDebugEnabled(loc, storage) {
         try {
@@ -140,10 +153,11 @@
             }, this._info));
         },
 
-        isEnabled() { return this._enabled; }
+        isEnabled() { return this._enabled; },
+        buildExtraLines() { return buildExtraLines(); }
     };
 
-    const api = { PerfOverlay, fpsFromTimestamps, pruneTimestamps, formatStats, isDebugEnabled };
+    const api = { PerfOverlay, fpsFromTimestamps, pruneTimestamps, formatStats, isDebugEnabled, buildExtraLines };
     if (typeof module !== 'undefined' && module.exports) module.exports = api;
     else {
         root.PerfOverlay = PerfOverlay;
