@@ -789,6 +789,7 @@
         // ========== Core Functions ==========
 
         async function initFaceApi() {
+            let storageMarkOpen = false;
             try {
                 showSpinner();
 
@@ -869,6 +870,7 @@
 
                 // ===== Step 4: Initialize Registration Manager =====
                 performance.mark('face-init:storage-start');
+                storageMarkOpen = true;
                 await faceStorage.init();
                 registrationManager = new FaceRegistrationManager({
                     maxCaptures: CONFIG.registration.maxCaptures,
@@ -879,6 +881,7 @@
                 });
                 await registrationManager.init(faceStorage);
                 performance.mark('face-init:storage-end');
+                storageMarkOpen = false;
                 performance.measure('face-init: Storage init', {
                     start: 'face-init:storage-start', end: 'face-init:storage-end',
                     detail: {}
@@ -911,9 +914,7 @@
                 requestPersistentStorage();
 
             } catch (error) {
-                // Close any orphaned timing mark so the Performance timeline stays consistent
-                if (performance.getEntriesByName('face-init:storage-start').length > 0 &&
-                    performance.getEntriesByName('face-init:storage-end').length === 0) {
+                if (storageMarkOpen) {
                     performance.mark('face-init:storage-end');
                     try {
                         performance.measure('face-init: Storage init', {
