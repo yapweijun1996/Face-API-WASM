@@ -749,12 +749,15 @@
         async function loadFromIndexedDB() {
             showSpinner();
             setStatus('Loading from IndexedDB...');
+            let storageMarkOpen = false;
 
             try {
                 performance.mark('face-init:storage-start');
+                storageMarkOpen = true;
                 await faceStorage.init();
                 const result = await faceMatcher.loadFromStorage(faceStorage);
                 performance.mark('face-init:storage-end');
+                storageMarkOpen = false;
                 performance.measure('face-init: Storage init', {
                     start: 'face-init:storage-start', end: 'face-init:storage-end',
                     detail: { count: result.count || 0 }
@@ -777,6 +780,15 @@
                     updateUserList([]);
                 }
             } catch (error) {
+                if (storageMarkOpen) {
+                    performance.mark('face-init:storage-end');
+                    try {
+                        performance.measure('face-init: Storage init', {
+                            start: 'face-init:storage-start', end: 'face-init:storage-end',
+                            detail: { count: -1 }
+                        });
+                    } catch (_) {}
+                }
                 setStatus(friendlyStorageError(error), 'error');
             }
 
