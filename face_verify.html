@@ -791,7 +791,13 @@
             setStatus('Loading JSON file...');
 
             try {
+                performance.mark('face-init:json-start');
                 const result = await faceMatcher.loadFromFile(file);
+                performance.mark('face-init:json-end');
+                performance.measure('face-init: JSON load', {
+                    start: 'face-init:json-start', end: 'face-init:json-end',
+                    detail: { count: result.count || 0 }
+                });
 
                 if (result.success) {
                     updateUserList(faceMatcher.getRegisteredUsers());
