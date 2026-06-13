@@ -121,6 +121,8 @@
             'thresholdInput', 'thresholdVal', 'thresholdLabel', 'livenessToggle',
             'vlmFields', 'livenessModeSelect', 'showLivenessFramesToggle', 'realProbLabel', 'realProbVal', 'realProbInput', 'vlmEndpointInput', 'vlmModelInput',
             'verifyRunBtn', 'verifyScope', 'verifyProgress', 'verifyBar', 'verifyProgressText', 'reviewModal', 'reviewTitle', 'reviewFrames', 'reviewReason', 'reviewMarkBtn', 'reviewClose',
+            'imageViewerModal', 'imageViewerTitle', 'imageViewerCounter', 'imageViewerClose', 'imageViewerStage', 'imageViewerImg',
+            'imageViewerPrev', 'imageViewerNext', 'imageViewerZoomIn', 'imageViewerZoomOut', 'imageViewerZoomLabel',
             'soundToggle', 'soundFields', 'speakToggle', 'voiceSelect', 'voiceTestBtn', 'voiceFields',
             'livenessModal', 'lmCard', 'lmBadge', 'lmTitle', 'lmSub', 'lmBar', 'lmFrames',
             'workStartInput', 'workEndInput', 'graceInput',
@@ -434,7 +436,7 @@
             if (!alive()) return;
             // 不可达 / 无客户端 / 无帧可送 → fail-open：照常打卡 + 提示核验不可用
             if (!eng || !eng.ready || !frames || !frames.length) {
-                await doClock(emp, action, box);
+                await doClock(emp, action, box, frames);
                 if (alive()) { showLivenessResult('unavailable', null); await sleep(1400); }
                 return;
             }
@@ -443,7 +445,7 @@
             if (track) track.data.realProb = v.confidence;   // 供关窗后人脸框读数展示
             console.log('TMS VLM verdict:', { real: v.real, confidence: Number(v.confidence.toFixed(2)), reason: v.reason });
             if (v.real && v.confidence >= settings.livenessRealProb) {
-                await doClock(emp, action, box);            // 真人 → 打卡（撒花/语音/冷却）
+                await doClock(emp, action, box, frames);    // 真人 → 打卡（撒花/语音/冷却）
                 if (alive()) { showLivenessResult('real', v); await sleep(1200); }
             } else {
                 showLivenessResult('fake', v);               // 伪造 → 不打卡
@@ -458,7 +460,7 @@
             // 核验异常（超时/解析失败）→ fail-open：照常打卡，记录原因
             console.warn('TMS VLM gate error, fail-open:', e.message);
             if (alive()) {
-                await doClock(emp, action, box);
+                await doClock(emp, action, box, frames);
                 showLivenessResult('error', null);
                 await sleep(1400);
             }
@@ -899,9 +901,8 @@
                 }
 
                 // 先打卡后核验（deferred）/ 关闭防伪：立即打卡，不阻塞。
-                // deferred 时附带抓拍帧（有几帧用几帧，一帧没有就当场补抓），交给 HR 事后批量核验。
-                let captured = null;
-                if (settings.liveness) captured = captureDeferredFrames();
+                // 所有记录都保存抓拍帧用于记录预览；仅开启 AI 时才标记 pending 进入批量核验。
+                const captured = captureDeferredFrames();
                 d.phase = 'done';
                 clockedThisFrame.add(emp.id);
                 if (await doClock(emp, d.action, box, captured)) {
@@ -1008,15 +1009,16 @@
     async function doClock(emp, type, box, frames) {
         lastClockKey = null;
         const status = computeStatus(type, Date.now());
-        // 延迟核验模式：有抓拍帧 → 记录标记 pending，待 HR 事后批量送 AI
+        // 抓拍帧用于记录预览；只有延迟 AI 核验开启时才标记 pending，待 HR 事后批量送 AI。
         const hasFrames = Array.isArray(frames) && frames.length > 0;
+        const needsDeferredVerify = hasFrames && settings.liveness && settings.livenessMode !== 'realtime';
         // handleClockFrameMulti 是被 await 的，这里不会并发重入；
         // 写库成功后再置冷却 + 反馈，写失败则回退该员工的 hold 让其可重试。
         let saved;
         try {
             saved = await tmsDB.addAttendance({
                 employeeId: emp.id, employeeName: emp.name, type, status,
-                verifyStatus: hasFrames ? 'pending' : 'none'
+                verifyStatus: needsDeferredVerify ? 'pending' : 'none'
             });
         } catch (e) {
             // 写库失败：返回 false，由调用方回退该 track 的 hold 让其重试（不影响其他人）
@@ -1523,11 +1525,14 @@
         batchRunning = true;
         if (el.verifyRunBtn) el.verifyRunBtn.querySelector('span').textContent = I18N.t('verify_stop_btn');
         let done = 0, flagged = 0;
-        const t0 = performance.now();
+        // ETA 用最近 N 条耗时的滑动平均（而非全程均值），对速度突变（模型预热后变快）响应更准
+        const ETA_WINDOW = 5;
+        const durations = [];
+        let tick = performance.now();
         for (const r of queue) {
             if (!batchRunning) break;                       // 可中断
-            // 预计剩余 = 已用时 / 已完成 × 剩余条数（首条无数据时不显示）
-            const eta = done > 0 ? ((performance.now() - t0) / done) * (queue.length - done) : null;
+            const avg = durations.length ? durations.reduce((a, b) => a + b, 0) / durations.length : null;
+            const eta = avg != null ? avg * (queue.length - done) : null;   // 首条无数据时不显示
             setVerifyProgress(done, queue.length, eta);
             const frames = await tmsDB.getFrames(r.recordId);
             if (!frames || !frames.length) {                // 没帧可核验 → 归为 none，不再排队
@@ -1540,7 +1545,7 @@
                     await tmsDB.updateAttendanceVerify(r.recordId, {
                         verifyStatus: 'real', verifyConfidence: v.confidence, verifyReason: v.reason, verifiedAt: Date.now()
                     });
-                    await tmsDB.deleteFrames(r.recordId);    // 通过即删帧省空间
+                    // 保留抓拍帧：记录表任意记录都可点开查看当时画面。
                 } else {
                     await tmsDB.updateAttendanceVerify(r.recordId, {
                         verifyStatus: 'suspect', verifyConfidence: v.confidence, verifyReason: v.reason, verifiedAt: Date.now()
@@ -1552,24 +1557,48 @@
                 await tmsDB.updateAttendanceVerify(r.recordId, { verifyStatus: 'error', verifyReason: e.message });
             }
             done++;
+            // 记录本条耗时进滑动窗口（保留最近 ETA_WINDOW 条）
+            const nowT = performance.now();
+            durations.push(nowT - tick);
+            if (durations.length > ETA_WINDOW) durations.shift();
+            tick = nowT;
         }
         batchRunning = false;
         if (el.verifyRunBtn) el.verifyRunBtn.querySelector('span').textContent = I18N.t('verify_run_btn');
         setVerifyProgress(null);
         toast(I18N.t('verify_done', { done, flagged }), flagged ? 'err' : 'ok');
         await renderRecords();
+        // 完成后若有疑似记录 → 自动把记录表过滤到「需复核」，HR 一键看到该处理的
+        if (flagged > 0 && el.recordsFilter) {
+            el.recordsFilter.value = I18N.t('verify_suspect');
+            el.recordsFilter.dispatchEvent(new Event('input'));
+        }
     }
 
     // ---------- 人工复核弹窗 ----------
     let reviewRec = null;
+    const imageViewer = { frames: [], index: 0, zoom: 1, title: '' };
+
     async function openReview(rec) {
         reviewRec = rec;
         if (!el.reviewModal) return;
-        el.reviewTitle.textContent = I18N.t('review_title') + ' — ' + (rec.employeeName || rec.employeeId);
+        const titleKey = rec.verifyStatus === 'suspect' ? 'review_title' : 'record_preview';
+        el.reviewTitle.textContent = I18N.t(titleKey) + ' — ' + (rec.employeeName || rec.employeeId);
         const frames = await tmsDB.getFrames(rec.recordId);
         el.reviewFrames.innerHTML = '';
         if (frames && frames.length) {
-            frames.forEach(url => { const img = document.createElement('img'); img.src = url; img.alt = ''; el.reviewFrames.appendChild(img); });
+            frames.forEach((url, index) => {
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'frame-thumb';
+                btn.setAttribute('aria-label', I18N.t('image_viewer_open', { n: index + 1 }));
+                btn.addEventListener('click', () => openImageViewer(frames, index, el.reviewTitle.textContent));
+                const img = document.createElement('img');
+                img.src = url;
+                img.alt = '';
+                btn.appendChild(img);
+                el.reviewFrames.appendChild(btn);
+            });
         } else {
             el.reviewFrames.textContent = I18N.t('review_no_frames');
         }
@@ -1579,13 +1608,71 @@
         el.reviewMarkBtn.style.display = (rec.verifyStatus === 'suspect') ? '' : 'none';
         el.reviewModal.classList.add('show');
     }
-    function closeReview() { if (el.reviewModal) el.reviewModal.classList.remove('show'); reviewRec = null; }
+    function closeReview() {
+        closeImageViewer();
+        if (el.reviewModal) el.reviewModal.classList.remove('show');
+        reviewRec = null;
+    }
     async function markReviewed() {
         if (!reviewRec) return;
         await tmsDB.updateAttendanceVerify(reviewRec.recordId, { verifyStatus: 'reviewed', reviewedAt: Date.now() });
         toast(I18N.t('review_marked'), 'ok');
         closeReview();
         await renderRecords();
+    }
+
+    function openImageViewer(frames, index, title) {
+        if (!el.imageViewerModal || !frames || !frames.length) return;
+        imageViewer.frames = frames.slice();
+        imageViewer.index = Math.min(Math.max(0, index || 0), imageViewer.frames.length - 1);
+        imageViewer.zoom = 1;
+        imageViewer.title = title || I18N.t('record_preview');
+        renderImageViewer();
+        el.imageViewerModal.classList.add('show');
+        el.imageViewerModal.setAttribute('aria-hidden', 'false');
+        if (el.imageViewerClose) el.imageViewerClose.focus();
+    }
+
+    function closeImageViewer() {
+        if (!el.imageViewerModal) return;
+        el.imageViewerModal.classList.remove('show');
+        el.imageViewerModal.setAttribute('aria-hidden', 'true');
+    }
+
+    function renderImageViewer() {
+        const total = imageViewer.frames.length;
+        const index = imageViewer.index;
+        const zoom = imageViewer.zoom;
+        if (el.imageViewerTitle) el.imageViewerTitle.textContent = imageViewer.title || I18N.t('record_preview');
+        if (el.imageViewerImg) {
+            el.imageViewerImg.src = total ? imageViewer.frames[index] : '';
+            el.imageViewerImg.style.transform = `scale(${zoom})`;
+        }
+        if (el.imageViewerCounter) el.imageViewerCounter.textContent = I18N.t('image_viewer_counter', { n: total ? index + 1 : 0, total });
+        if (el.imageViewerZoomLabel) el.imageViewerZoomLabel.textContent = Math.round(zoom * 100) + '%';
+        if (el.imageViewerPrev) el.imageViewerPrev.disabled = index <= 0;
+        if (el.imageViewerNext) el.imageViewerNext.disabled = index >= total - 1;
+        if (el.imageViewerZoomOut) el.imageViewerZoomOut.disabled = zoom <= 1;
+        if (el.imageViewerZoomIn) el.imageViewerZoomIn.disabled = zoom >= 4;
+        if (el.imageViewerStage) {
+            el.imageViewerStage.scrollTop = 0;
+            el.imageViewerStage.scrollLeft = 0;
+        }
+    }
+
+    function stepImageViewer(delta) {
+        if (!el.imageViewerModal || !el.imageViewerModal.classList.contains('show')) return;
+        const next = imageViewer.index + delta;
+        if (next < 0 || next >= imageViewer.frames.length) return;
+        imageViewer.index = next;
+        imageViewer.zoom = 1;
+        renderImageViewer();
+    }
+
+    function zoomImageViewer(delta) {
+        if (!el.imageViewerModal || !el.imageViewerModal.classList.contains('show')) return;
+        imageViewer.zoom = Math.min(4, Math.max(1, Math.round((imageViewer.zoom + delta) * 4) / 4));
+        renderImageViewer();
     }
 
     /** 把打卡记录按员工配对成工时（in→out 累加）。配对逻辑的唯一来源。
@@ -1782,7 +1869,22 @@
         if (el.speakToggle) el.speakToggle.checked = !!settings.speakEnabled;
         if (el.soundFields) el.soundFields.style.display = settings.soundEnabled ? 'block' : 'none';
         if (el.voiceFields) el.voiceFields.style.display = (settings.soundEnabled && settings.speakEnabled) ? 'block' : 'none';
+        updateImageViewerLabels();
         populateVoiceSelect();
+    }
+
+    function updateImageViewerLabels() {
+        [
+            [el.imageViewerPrev, 'image_viewer_prev'],
+            [el.imageViewerNext, 'image_viewer_next'],
+            [el.imageViewerZoomIn, 'image_viewer_zoom_in'],
+            [el.imageViewerZoomOut, 'image_viewer_zoom_out'],
+            [el.imageViewerClose, 'image_viewer_close']
+        ].forEach(([node, key]) => {
+            if (!node) return;
+            node.setAttribute('aria-label', I18N.t(key));
+            node.title = I18N.t(key);
+        });
     }
 
     // ============================================================
@@ -1815,6 +1917,20 @@
         if (el.reviewMarkBtn) el.reviewMarkBtn.addEventListener('click', markReviewed);
         if (el.reviewClose) el.reviewClose.addEventListener('click', closeReview);
         if (el.reviewModal) el.reviewModal.addEventListener('click', (e) => { if (e.target === el.reviewModal) closeReview(); });
+        if (el.imageViewerClose) el.imageViewerClose.addEventListener('click', closeImageViewer);
+        if (el.imageViewerPrev) el.imageViewerPrev.addEventListener('click', () => stepImageViewer(-1));
+        if (el.imageViewerNext) el.imageViewerNext.addEventListener('click', () => stepImageViewer(1));
+        if (el.imageViewerZoomIn) el.imageViewerZoomIn.addEventListener('click', () => zoomImageViewer(0.25));
+        if (el.imageViewerZoomOut) el.imageViewerZoomOut.addEventListener('click', () => zoomImageViewer(-0.25));
+        if (el.imageViewerModal) el.imageViewerModal.addEventListener('click', (e) => { if (e.target === el.imageViewerModal) closeImageViewer(); });
+        document.addEventListener('keydown', (e) => {
+            if (!el.imageViewerModal || !el.imageViewerModal.classList.contains('show')) return;
+            if (e.key === 'Escape') { e.preventDefault(); closeImageViewer(); }
+            else if (e.key === 'ArrowLeft') { e.preventDefault(); stepImageViewer(-1); }
+            else if (e.key === 'ArrowRight') { e.preventDefault(); stepImageViewer(1); }
+            else if (e.key === '+' || e.key === '=') { e.preventDefault(); zoomImageViewer(0.25); }
+            else if (e.key === '-' || e.key === '_') { e.preventDefault(); zoomImageViewer(-0.25); }
+        });
         if (el.thresholdInput) {
             el.thresholdInput.addEventListener('input', () => {
                 const v = Math.min(SAFE_MATCH_THRESHOLD, parseFloat(el.thresholdInput.value));

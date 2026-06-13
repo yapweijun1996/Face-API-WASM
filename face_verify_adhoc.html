@@ -411,6 +411,7 @@
     <script src="./js/core/DeviceProfile.js"></script>
     <script src="./js/core/utils.js"></script>
     <script src="./js/core/FaceMatcher.js?v=2"></script>
+    <script src="./js/core/PerfOverlay.js"></script>
 </head>
 
 <body>
@@ -951,6 +952,23 @@
                 });
             }
             isDetecting = true;
+
+            // 开发性能浮层（仅 ?debug=1）
+            if (typeof PerfOverlay !== 'undefined') {
+                PerfOverlay.init();
+                PerfOverlay.setInfo({
+                    model: CONFIG.detection.detectorModel,
+                    backend: (typeof faceapi !== 'undefined' && faceapi.tf && faceapi.tf.getBackend) ? faceapi.tf.getBackend() : ''
+                });
+                if (PerfOverlay.isEnabled() && typeof PerformanceObserver !== 'undefined') {
+                    new PerformanceObserver(() => {
+                        const lines = performance.getEntriesByType('measure')
+                            .filter(e => e.name.startsWith('face-init:') && !e.name.includes('Total'))
+                            .map(e => e.name.replace('face-init: ', '') + ': ' + Math.round(e.duration) + 'ms');
+                        if (lines.length > 0) PerfOverlay.setInfo({ extra: lines });
+                    }).observe({ type: 'measure', buffered: true });
+                }
+            }
 
             const loop = async () => {
                 if (!isDetecting || video.paused || video.ended) {

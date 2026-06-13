@@ -16,8 +16,8 @@ const TMS_DB_NAME = 'TMS_DB';
 const TMS_DB_VERSION = 2;          // v2：新增 attendance_frames store（延迟核验抓拍）
 const STORE_EMPLOYEES = 'employees';
 const STORE_ATTENDANCE = 'attendance';
-// 延迟核验模式下抓拍的帧单独存这里（keyPath=recordId），避免挂在考勤记录上
-// 拖慢 getAllAttendance —— 记录页/看板每次都 getAll，帧很重不该被一并反序列化。
+// 打卡抓拍帧单独存这里（keyPath=recordId），供记录预览和延迟核验使用。
+// 避免挂在考勤记录上拖慢 getAllAttendance —— 记录页/看板每次都 getAll，帧很重不该被一并反序列化。
 const STORE_FRAMES = 'attendance_frames';
 
 const SETTINGS_KEY = 'tms_settings';
@@ -53,8 +53,14 @@ class TmsDB {
         return new Promise((resolve, reject) => {
             const req = indexedDB.open(TMS_DB_NAME, TMS_DB_VERSION);
             req.onerror = () => reject(req.error);
+            req.onblocked = () => reject(new Error('IndexedDB open blocked by another connection'));
             req.onsuccess = () => { this.db = req.result; resolve(this); };
             req.onupgradeneeded = (e) => {
+                const upgradeTx = e.target.transaction;
+                if (upgradeTx) {
+                    upgradeTx.onabort = () => reject(upgradeTx.error || new Error('IndexedDB upgrade transaction aborted'));
+                    upgradeTx.onerror = () => reject(upgradeTx.error || new Error('IndexedDB upgrade transaction error'));
+                }
                 const db = e.target.result;
                 if (!db.objectStoreNames.contains(STORE_EMPLOYEES)) {
                     db.createObjectStore(STORE_EMPLOYEES, { keyPath: 'id' });
@@ -184,7 +190,7 @@ class TmsDB {
         return { recordId: id, ...data };
     }
 
-    // ===== 延迟核验：抓拍帧（独立 store）+ 核验状态更新 =====
+    // ===== 记录抓拍帧（独立 store）+ 核验状态更新 =====
 
     /** 存某条考勤记录的抓拍帧（dataURL[]）。frames 重，单独 store，按需读取。 */
     async saveFrames(recordId, frames) {

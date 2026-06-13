@@ -331,6 +331,43 @@
     .enroll-text { text-align: center; color: var(--muted); font-size: 13px; }
     .thumbs { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0; }
     .thumbs img { width: 44px; height: 44px; border-radius: 8px; object-fit: cover; }
+    .frame-thumb {
+        padding: 0; border: 1px solid transparent; border-radius: 10px; background: transparent;
+        cursor: zoom-in; line-height: 0;
+    }
+    .frame-thumb:hover, .frame-thumb:focus-visible { border-color: var(--accent); outline: none; }
+    .frame-thumb img { display: block; }
+
+    /* ---------- 抓拍图片查看器 ---------- */
+    .image-viewer { z-index: 90; padding: 12px; }
+    .image-viewer-card {
+        width: min(960px, 100%); height: min(86vh, 760px); padding: 0; overflow: hidden;
+        display: grid; grid-template-rows: auto minmax(0, 1fr) auto;
+    }
+    .image-viewer-head, .image-viewer-tools {
+        display: flex; align-items: center; gap: 10px; padding: 12px 14px;
+        background: var(--modal-head-bg); border-color: var(--line);
+    }
+    .image-viewer-head { border-bottom: 1px solid var(--line); }
+    .image-viewer-tools { border-top: 1px solid var(--line); justify-content: center; }
+    .image-viewer-title { margin: 0; font-size: 16px; flex: 1; min-width: 0; }
+    .image-viewer-count { color: var(--muted); font-size: 13px; white-space: nowrap; }
+    .image-viewer-stage {
+        min-height: 0; overflow: auto; background: oklch(0% 0 0 / .3);
+        display: grid; place-items: center; padding: 16px;
+    }
+    .image-viewer-img {
+        max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 8px;
+        transform-origin: center center; transition: transform .12s ease;
+    }
+    .viewer-btn {
+        width: 40px; height: 40px; display: inline-grid; place-items: center;
+        border-radius: 10px; border: 1px solid var(--line); background: transparent;
+        color: var(--text); cursor: pointer;
+    }
+    .viewer-btn:hover, .viewer-btn:focus-visible { border-color: var(--accent); color: var(--accent); outline: none; }
+    .viewer-btn:disabled { opacity: .38; cursor: not-allowed; }
+    .viewer-zoom-label { min-width: 54px; text-align: center; color: var(--muted); font-size: 13px; }
 
     /* ---------- AI 核验弹层 ---------- */
     .lm-card { text-align: center; }
@@ -438,6 +475,11 @@
         <symbol id="i-scan" viewBox="0 0 24 24"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2M3 12h18"/></symbol>
         <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></symbol>
         <symbol id="i-moon" viewBox="0 0 24 24"><path d="M21 12.8A8.5 8.5 0 1 1 11.2 3a6.5 6.5 0 0 0 9.8 9.8z"/></symbol>
+        <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></symbol>
+        <symbol id="i-chevron-left" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></symbol>
+        <symbol id="i-chevron-right" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></symbol>
+        <symbol id="i-zoom-in" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35M11 8v6M8 11h6"/></symbol>
+        <symbol id="i-zoom-out" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35M8 11h6"/></symbol>
     </defs>
 </svg>
 
@@ -717,6 +759,26 @@
             <button class="btn" id="reviewMarkBtn"><svg class="ico"><use href="#i-user-check"/></svg><span data-i18n="review_mark_ok">标记已复核无问题</span></button>
         </div>
         <button class="btn ghost" id="reviewClose" style="margin-top:8px;" data-i18n="close">关闭</button>
+    </div>
+</div>
+
+<div class="modal image-viewer" id="imageViewerModal" aria-hidden="true">
+    <div class="modal-card image-viewer-card">
+        <div class="image-viewer-head">
+            <h3 class="image-viewer-title" id="imageViewerTitle">Preview record</h3>
+            <span class="image-viewer-count" id="imageViewerCounter">0 / 0</span>
+            <button class="viewer-btn" id="imageViewerClose" type="button" aria-label="Close"><svg class="ico"><use href="#i-x"/></svg></button>
+        </div>
+        <div class="image-viewer-stage" id="imageViewerStage">
+            <img class="image-viewer-img" id="imageViewerImg" alt="" />
+        </div>
+        <div class="image-viewer-tools">
+            <button class="viewer-btn" id="imageViewerPrev" type="button" aria-label="Previous image"><svg class="ico"><use href="#i-chevron-left"/></svg></button>
+            <button class="viewer-btn" id="imageViewerZoomOut" type="button" aria-label="Zoom out"><svg class="ico"><use href="#i-zoom-out"/></svg></button>
+            <span class="viewer-zoom-label" id="imageViewerZoomLabel">100%</span>
+            <button class="viewer-btn" id="imageViewerZoomIn" type="button" aria-label="Zoom in"><svg class="ico"><use href="#i-zoom-in"/></svg></button>
+            <button class="viewer-btn" id="imageViewerNext" type="button" aria-label="Next image"><svg class="ico"><use href="#i-chevron-right"/></svg></button>
+        </div>
     </div>
 </div>
 

@@ -751,8 +751,14 @@
             setStatus('Loading from IndexedDB...');
 
             try {
+                performance.mark('face-init:storage-start');
                 await faceStorage.init();
                 const result = await faceMatcher.loadFromStorage(faceStorage);
+                performance.mark('face-init:storage-end');
+                performance.measure('face-init: Storage init', {
+                    start: 'face-init:storage-start', end: 'face-init:storage-end',
+                    detail: { count: result.count || 0 }
+                });
 
                 if (result.success && result.count > 0) {
                     updateUserList(faceMatcher.getRegisteredUsers());
@@ -983,14 +989,11 @@
                     clusters: faceMatcher.descriptors.length
                 });
                 if (PerfOverlay.isEnabled() && typeof PerformanceObserver !== 'undefined') {
-                    new PerformanceObserver((list) => {
-                        const entries = list.getEntries()
-                            .filter(e => e.name.startsWith('face-init:') && !e.name.includes('Total'));
-                        if (entries.length > 0) {
-                            PerfOverlay.setInfo({
-                                extra: entries.map(e => e.name.replace('face-init: ', '') + ': ' + Math.round(e.duration) + 'ms')
-                            });
-                        }
+                    new PerformanceObserver(() => {
+                        const lines = performance.getEntriesByType('measure')
+                            .filter(e => e.name.startsWith('face-init:') && !e.name.includes('Total'))
+                            .map(e => e.name.replace('face-init: ', '') + ': ' + Math.round(e.duration) + 'ms');
+                        if (lines.length > 0) PerfOverlay.setInfo({ extra: lines });
                     }).observe({ type: 'measure', buffered: true });
                 }
             }

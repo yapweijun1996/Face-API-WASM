@@ -13,7 +13,7 @@
  *  skipWaiting + controllerchange → 页面自动 reload，运行最新代码。
  */
 
-const VERSION = 'tms-v27';
+const VERSION = 'tms-v28';
 const APP_CACHE = `app-${VERSION}`;
 const STATIC_CACHE = `static-${VERSION}`;
 

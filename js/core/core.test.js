@@ -198,6 +198,22 @@ test('formatStats: extra 为空数组时不追加分割线', () => {
     assert.strictEqual(s, 'FPS: 10');
 });
 
+// ============ FaceUtils.formatDuration ============
+test('formatDuration: <1s 显示毫秒', () => {
+    assert.strictEqual(FaceUtils.formatDuration(450), '450ms');
+});
+
+test('formatDuration: 1s-59s 显示秒', () => {
+    assert.strictEqual(FaceUtils.formatDuration(5000), '5s');
+    assert.strictEqual(FaceUtils.formatDuration(59400), '59s'); // rounds to 59s
+});
+
+test('formatDuration: >=60s 显示 Xm Ys', () => {
+    assert.strictEqual(FaceUtils.formatDuration(65000), '1m 5s');
+    assert.strictEqual(FaceUtils.formatDuration(120000), '2m 0s');
+    assert.strictEqual(FaceUtils.formatDuration(3661000), '61m 1s');
+});
+
 test('isDebugEnabled: ?debug=1 开启', () => {
     assert.strictEqual(isDebugEnabled({ search: '?debug=1' }, null), true);
     assert.strictEqual(isDebugEnabled({ search: '?foo=1&debug=1' }, null), true);

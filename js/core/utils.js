@@ -33,7 +33,23 @@
         return Math.sqrt(sum);
     }
 
+    /**
+     * 把毫秒数格式化为人类可读字符串：
+     *   >=60s → "Xm Ys"
+     *   >=1s  → "Xs"
+     *   <1s   → "Xms"
+     * @param {number} ms
+     * @returns {string}
+     */
+    function formatDuration(ms) {
+        const secs = Math.round(ms / 1000);
+        if (secs >= 60) return Math.floor(secs / 60) + 'm ' + (secs % 60) + 's';
+        if (secs > 0) return secs + 's';
+        return Math.round(ms) + 'ms';
+    }
+
     global.FaceUtils = global.FaceUtils || {};
     global.FaceUtils.euclideanDistance = euclideanDistance;
+    global.FaceUtils.formatDuration = formatDuration;
 
 }(typeof globalThis !== 'undefined' ? globalThis : window));

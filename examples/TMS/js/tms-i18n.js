@@ -158,6 +158,13 @@ const I18N = (() => {
             review_mark_ok: 'Mark reviewed — no issue',
             review_marked: 'Marked reviewed',
             review_no_frames: 'No captured frames for this record',
+            image_viewer_open: 'Open capture image {n}',
+            image_viewer_prev: 'Previous image',
+            image_viewer_next: 'Next image',
+            image_viewer_zoom_in: 'Zoom in',
+            image_viewer_zoom_out: 'Zoom out',
+            image_viewer_close: 'Close image viewer',
+            image_viewer_counter: '{n} / {total}',
             dash: '—'
         },
         zh: {
@@ -305,6 +312,13 @@ const I18N = (() => {
             review_mark_ok: '标记已复核无问题',
             review_marked: '已标记复核无问题',
             review_no_frames: '该记录没有抓拍帧',
+            image_viewer_open: '打开第 {n} 张抓拍图',
+            image_viewer_prev: '上一张',
+            image_viewer_next: '下一张',
+            image_viewer_zoom_in: '放大',
+            image_viewer_zoom_out: '缩小',
+            image_viewer_close: '关闭图片查看器',
+            image_viewer_counter: '{n} / {total}',
             dash: '—'
         }
     };
