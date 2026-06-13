@@ -196,11 +196,11 @@ The liveness module (`js/tms-liveness.js`) calls a local LM Studio endpoint (`ht
 
 1. Install [LM Studio](https://lmstudio.ai/) and load a vision model (e.g. `minicpm-v-4.6`).
 2. Start the local server in LM Studio on port 6501.
-3. Clock-in attempts will send 5 webcam frames to MiniCPM-V for liveness analysis.
+3. Clock-in attempts capture configurable full webcam frames: 3-6 images, 0.5-3s interval. The default is 6 frames at 0.5s, sent to MiniCPM-V in one request; Settings also allow one-by-one review with conversation history or independent one-frame checks.
 
 **Graceful degradation:** If LM Studio is unreachable, liveness check is skipped and the clock-in proceeds. Change this behavior in `tms-app.js` if you need hard enforcement.
 
-**What it detects:** Phone/tablet/screen replay, printed photos, hand-held photos. Relies on full-frame context — a hand holding a phone is a strong spoof signal. VLM verdicts include `attack_type`, `spoof_cues`, and `uncertain`; records also store a passive geometry score.
+**What it detects:** Phone/tablet/screen replay, printed photos, hand-held photos. Relies on full-frame context — a hand holding a phone is a strong spoof signal. VLM verdicts include `attack_type`, `spoof_cues`, and `uncertain`; records also store a passive geometry score, selected VLM review mode, and frame sampling settings.
 
 **What it does NOT guarantee:** High-quality 3D masks, sophisticated deepfakes. Suitable for attendance; not certified for high-security access control.
 

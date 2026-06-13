@@ -259,9 +259,11 @@
     .verify-reviewed .vbadge { color: var(--in); }
     .verify-suspect .vbadge { color: var(--warn); }
     .verify-error .vbadge { color: var(--out); }
+    .verify-error_permanent .vbadge { color: var(--out); font-weight: 700; }
     .verify-none { color: var(--muted); }
     .verify-suspect, .verify-reviewed { cursor: pointer; }
     .verify-progress { font-size: 13px; color: var(--muted); margin-bottom: 10px; text-align: center; }
+    .verify-summary { font-size: 13px; color: var(--muted); margin-bottom: 10px; }
     .verify-scope { flex: 0 0 auto; padding: 0 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--card); color: var(--text); font-size: 14px; font-weight: 600; cursor: pointer; }
     /* 过滤态徽章：仅核验「需复核」视图时出现，带计数 + 清除 */
     /* 多状态快捷筛选条 */
@@ -272,11 +274,13 @@
     .fchip.verify-pending .ico { color: var(--muted); }
     .fchip.verify-suspect .ico { color: var(--warn); }
     .fchip.verify-error   .ico { color: var(--out); }
+    .fchip.verify-error_permanent .ico { color: var(--out); }
     /* 选中态：实心高亮，便于一眼看出当前过滤的是哪类 */
     .fchip.active { color: var(--accent-ink); border-color: transparent; }
     .fchip.verify-pending.active { background: var(--muted); }
     .fchip.verify-suspect.active { background: var(--warn); }
     .fchip.verify-error.active   { background: var(--out); color: var(--danger-ink); }
+    .fchip.verify-error_permanent.active { background: var(--out); color: var(--danger-ink); }
     .fchip.active .ico { color: currentColor; }
     .fchip-clear { color: var(--muted); }
     .fchip-clear:hover { color: var(--text); }
@@ -494,6 +498,7 @@
         <symbol id="i-hourglass" viewBox="0 0 24 24"><path d="M6 2h12M6 22h12M6 2c0 4 3 6 6 6s6-2 6-6M6 22c0-4 3-6 6-6s6 2 6 6"/></symbol>
         <symbol id="i-user-check" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M16 11l2 2 4-4"/></symbol>
         <symbol id="i-scan" viewBox="0 0 24 24"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2M3 12h18"/></symbol>
+        <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M21 12a9 9 0 0 1-15.5 6.2M3 12A9 9 0 0 1 18.5 5.8M18 2v4h-4M6 22v-4h4"/></symbol>
         <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></symbol>
         <symbol id="i-moon" viewBox="0 0 24 24"><path d="M21 12.8A8.5 8.5 0 1 1 11.2 3a6.5 6.5 0 0 0 9.8 9.8z"/></symbol>
         <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></symbol>
@@ -604,7 +609,12 @@
                     </select>
                 </div>
             </div>
+            <div class="verify-summary" id="verifySummary" style="display:none;"></div>
             <div class="filter-chip" id="recordsFilterChip" style="display:none;"></div>
+            <div class="row-actions" id="bulkActions" style="display:none; margin-bottom:8px;">
+                <button class="btn" id="bulkMarkBtn"><svg class="ico"><use href="#i-user-check"/></svg><span data-i18n="bulk_mark_btn">全部标记真人</span></button>
+                <button class="btn danger" id="bulkDeleteBtn"><svg class="ico"><use href="#i-trash"/></svg><span data-i18n="bulk_delete_btn">全部删除</span></button>
+            </div>
             <div class="table-wrap">
                 <table>
                     <thead>
@@ -633,6 +643,7 @@
                     <option value="week" data-i18n="verify_scope_week">近 7 天</option>
                 </select>
                 <button class="btn" id="verifyRunBtn"><svg class="ico"><use href="#i-scan"/></svg><span data-i18n="verify_run_btn">AI 核验未审记录</span></button>
+                <button class="btn ghost" id="verifyAllBtn"><svg class="ico"><use href="#i-refresh"/></svg><span data-i18n="verify_all_btn">重新核验全部</span></button>
             </div>
             <div class="row-actions" style="margin-bottom:8px;">
                 <button class="btn ghost" id="verifyRetryBtn" style="display:none;"><svg class="ico"><use href="#i-x-circle"/></svg><span>重试失败</span></button>
@@ -696,6 +707,26 @@
                     </select>
                     <div class="toggle-desc" style="margin-top:6px;" data-i18n="liveness_mode_desc">高峰期建议用「先打卡后核验」：打卡极快，AI 核验留给 HR 事后在记录页批量跑。</div>
                 </div>
+                <div class="field" style="margin-top:14px;">
+                    <label data-i18n="vlm_review_mode_label">AI 图片核验方式</label>
+                    <select id="vlmReviewModeSelect" style="width:100%;padding:8px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--text);font-size:14px;margin-top:4px;">
+                        <option value="batch6" data-i18n="vlm_review_mode_batch6">全部图片一起送给 AI（快，推荐）</option>
+                        <option value="session6" data-i18n="vlm_review_mode_session6">同一段对话逐张检查（更严格，较慢）</option>
+                        <option value="single6" data-i18n="vlm_review_mode_single6">每张图片独立检查（最严格，最慢）</option>
+                    </select>
+                    <div class="toggle-desc" style="margin-top:6px;" data-i18n="vlm_review_mode_desc">只要任一张可疑，记录就进入复核。</div>
+                </div>
+                <div class="sched-grid" style="margin-top:14px;">
+                    <div class="field">
+                        <label for="vlmFrameCountInput" data-i18n="vlm_frame_count_label">核验图片数量</label>
+                        <input id="vlmFrameCountInput" type="number" min="3" max="6" step="1" />
+                    </div>
+                    <div class="field">
+                        <label for="vlmFrameIntervalInput" data-i18n="vlm_frame_interval_label">抓拍间隔（秒）</label>
+                        <input id="vlmFrameIntervalInput" type="number" min="0.5" max="3" step="0.5" />
+                    </div>
+                </div>
+                <div class="toggle-desc" id="vlmFramePlan" style="margin-top:6px;"></div>
                 <label class="toggle-row" for="autoRetryToggle" style="margin-top:14px;">
                     <div>
                         <div class="toggle-title" data-i18n="auto_retry_label">失败自动重试</div>
@@ -703,6 +734,16 @@
                     </div>
                     <input id="autoRetryToggle" type="checkbox" class="switch" />
                 </label>
+                <div class="sched-grid" style="margin-top:14px;">
+                    <div class="field">
+                        <label for="verifyMaxAttemptsInput" data-i18n="verify_max_attempts_label">失败上限次数</label>
+                        <input id="verifyMaxAttemptsInput" type="number" min="1" max="10" />
+                    </div>
+                    <div class="field">
+                        <label for="autoRetryIntervalInput" data-i18n="auto_retry_interval_label">自动重试间隔（秒）</label>
+                        <input id="autoRetryIntervalInput" type="number" min="5" max="3600" />
+                    </div>
+                </div>
                 <label class="toggle-row" for="showLivenessFramesToggle" style="margin-top:14px;">
                     <div>
                         <div class="toggle-title" data-i18n="show_liveness_frames_label">Show AI verification images</div>
@@ -797,6 +838,7 @@
         <div class="summary" id="reviewReason" style="margin-top:12px;"></div>
         <div class="row-actions">
             <button class="btn" id="reviewMarkBtn"><svg class="ico"><use href="#i-user-check"/></svg><span data-i18n="review_mark_ok">标记已复核无问题</span></button>
+            <button class="btn danger" id="reviewDeleteBtn" style="display:none;"><svg class="ico"><use href="#i-trash"/></svg><span data-i18n="review_delete_btn">删除重拍</span></button>
         </div>
         <button class="btn ghost" id="reviewClose" style="margin-top:8px;" data-i18n="close">关闭</button>
     </div>

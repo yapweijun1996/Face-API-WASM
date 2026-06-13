@@ -32,7 +32,12 @@ const DEFAULT_SETTINGS = {
     graceMin: 10,               // 迟到宽限（分钟）
     liveness: false,            // AI 视觉活体核验（MiniCPM-V via LM Studio）：默认关闭
     livenessMode: 'deferred',   // 'realtime'=打卡时阻塞送审；'deferred'=先打卡抓帧、HR 事后批量核验
+    vlmReviewMode: 'batch6',     // 'batch6'=6张一起送；'session6'=逐张送+历史；'single6'=逐张独立送
+    vlmFrameCount: 6,            // 每次 VLM 核验抓几张整帧，允许 3-6
+    vlmFrameIntervalMs: 500,     // VLM 抓帧间隔，允许 500-3000ms
     autoRetry: false,           // 失败自动重试：LM Studio 健康恢复后后台自动补跑 error 记录
+    verifyMaxAttempts: 3,       // 连续失败达此次数 → error_permanent，不再自动/批量重试
+    autoRetryIntervalSec: 30,   // 自动重试健康轮询间隔（秒）
     showLivenessFrames: false,  // 是否在核验弹层展示送给 AI 的帧；false 仍会发送，只是不显示给终端用户
     livenessRealProb: 0.50,     // VLM「真人置信度」放行阈值（越大越严格）；务必用真实样本校准
     vlmEndpoint: 'http://127.0.0.1:6501/v1',   // LM Studio OpenAI 兼容前缀（端口随 LM Studio 设置改）
@@ -191,6 +196,10 @@ class TmsDB {
             verifySpoofCues: Array.isArray(rec.verifySpoofCues) ? rec.verifySpoofCues.slice(0, 8) : [],
             verifyUncertain: !!rec.verifyUncertain,
             verifyVersion: rec.verifyVersion || '',
+            verifyReviewMode: rec.verifyReviewMode || '',
+            verifyFrameCount: Number.isFinite(Number(rec.verifyFrameCount)) ? Number(rec.verifyFrameCount) : null,
+            verifyFrameTargetCount: Number.isFinite(Number(rec.verifyFrameTargetCount)) ? Number(rec.verifyFrameTargetCount) : null,
+            verifyFrameIntervalMs: Number.isFinite(Number(rec.verifyFrameIntervalMs)) ? Number(rec.verifyFrameIntervalMs) : null,
             geometryScore: Number.isFinite(Number(rec.geometryScore)) ? Number(rec.geometryScore) : null,
             geometrySuspect: !!rec.geometrySuspect,
             geometryReason: rec.geometryReason || '',
@@ -275,6 +284,14 @@ class TmsDB {
         await this.init();
         await this._req(this._tx(STORE_ATTENDANCE, 'readwrite').clear());
         await this._req(this._tx(STORE_FRAMES, 'readwrite').clear());   // 抓拍帧一并清掉
+        return true;
+    }
+
+    /** 删除单条考勤记录 + 其抓拍帧（HR 复核判定为坏抓拍、需重拍时用）。 */
+    async deleteAttendance(recordId) {
+        await this.init();
+        await this._req(this._tx(STORE_ATTENDANCE, 'readwrite').delete(recordId));
+        await this._req(this._tx(STORE_FRAMES, 'readwrite').delete(recordId));
         return true;
     }
 

@@ -3,7 +3,7 @@
  * ---------------
  * 视觉大模型（VLM）活体核验 —— MiniCPM-V 经 LM Studio 本地服务。
  *
- *   打卡时连续抓 N 帧（默认 1 fps × 5 = 5 秒），整帧（非裁剪）发给本地 MiniCPM-V，
+ *   打卡时连续抓 N 帧（设置页可调，默认 6 张 / 0.5 秒间隔），整帧（非裁剪）发给本地 MiniCPM-V，
  *   让它判断「这是真人在场，还是伪造（照片 / 手机或屏幕里的人脸或视频 / 打印件 / 面具）」。
  *
  *   相比小型纹理模型（MiniFASNet），VLM 看的是**整帧上下文**：能直接发现
@@ -35,7 +35,7 @@
     const VLM_PROMPT =
         'You are a presentation-attack-detection (liveness) checker for a face attendance kiosk. ' +
         'Use a SECURITY-FIRST policy: one clear spoof cue is enough to mark SPOOF, even if the face looks realistic. ' +
-        'You are given several FULL webcam frames (about 1 fps), not cropped face images, of the person trying to clock in. ' +
+        'You are given several FULL webcam frames over a short configurable time window, not cropped face images, of the person trying to clock in. ' +
         'Decide if this is a GENUINE LIVE PERSON physically present in front of the camera, ' +
         'or a SPOOF: a photo, a phone/tablet/computer screen showing a face or video, a printed picture, or a mask. ' +
         'Inspect EVERY frame, especially corners and edges. Strong spoof cues: ANY visible phone/tablet/laptop, device bezel, or rectangular screen boundary; ' +
@@ -58,6 +58,53 @@
         const content = [{ type: 'text', text: prompt }];
         (frames || []).forEach(f => content.push({ type: 'image_url', image_url: { url: f } }));
         return [{ role: 'user', content }];
+    }
+
+    function normalizeReviewMode(mode) {
+        const m = String(mode || '').trim();
+        return (m === 'session6' || m === 'single6') ? m : 'batch6';
+    }
+
+    function framePrompt(index, total, priorVerdicts) {
+        const history = (priorVerdicts || []).map((v, i) => {
+            const cues = Array.isArray(v.spoof_cues) && v.spoof_cues.length ? v.spoof_cues.join(', ') : 'none';
+            return `frame ${i + 1}: real=${!!v.real}, confidence=${Number(v.confidence || 0).toFixed(2)}, attack_type=${v.attack_type || 'unknown'}, uncertain=${!!v.uncertain}, cues=${cues}`;
+        }).join('; ');
+        return VLM_PROMPT +
+            ` This is frame ${index + 1} of ${total}. Check ONLY this new frame visually, but use this prior verdict history for continuity: ${history || 'none'}. ` +
+            'If this frame has any spoof cue, return real=false even if prior frames looked real.';
+    }
+
+    function buildFrameMessages(frame, index, total, priorVerdicts) {
+        return buildMessages([frame], framePrompt(index, total, priorVerdicts));
+    }
+
+    function aggregateFrameVerdicts(verdicts, mode) {
+        const list = (verdicts || []).filter(Boolean);
+        if (!list.length) return null;
+        const badIndex = list.findIndex(v => !v.real || !!v.uncertain);
+        if (badIndex >= 0) {
+            const v = list[badIndex];
+            return {
+                ...v,
+                real: false,
+                confidence: Number(v.confidence) || 0,
+                reason: `frame ${badIndex + 1}/${list.length}: ${v.reason || 'suspect frame'}`.slice(0, 200),
+                frameVerdicts: list,
+                review_mode: normalizeReviewMode(mode)
+            };
+        }
+        const minConfidence = Math.min(...list.map(v => Number(v.confidence) || 0));
+        return {
+            real: true,
+            confidence: Math.max(0, Math.min(1, minConfidence)),
+            attack_type: 'none',
+            spoof_cues: [],
+            uncertain: false,
+            reason: `all ${list.length} frames passed ${normalizeReviewMode(mode)} review`,
+            frameVerdicts: list,
+            review_mode: normalizeReviewMode(mode)
+        };
     }
 
     /**
@@ -167,11 +214,16 @@
          * @returns {Promise<{real:boolean, confidence:number, reason:string, raw:string}>}
          */
         async verify(frames) {
+            const messages = buildMessages(frames, VLM_PROMPT);
+            return this.request(messages);
+        }
+
+        async request(messages) {
             const body = {
                 model: this.model,
                 temperature: 0,
                 max_tokens: 200,
-                messages: buildMessages(frames, VLM_PROMPT)
+                messages
             };
             const ctrl = new AbortController();
             const t = setTimeout(() => ctrl.abort(), this.timeoutMs);
@@ -193,12 +245,41 @@
                 clearTimeout(t);
             }
         }
+
+        async verifyFramesIndependently(frames) {
+            const verdicts = [];
+            for (let i = 0; i < (frames || []).length; i++) {
+                const v = await this.request(buildFrameMessages(frames[i], i, frames.length, []));
+                verdicts.push(v);
+                if (!v.real || v.uncertain) break;
+            }
+            return aggregateFrameVerdicts(verdicts, 'single6');
+        }
+
+        async verifyFramesInSession(frames) {
+            const verdicts = [];
+            for (let i = 0; i < (frames || []).length; i++) {
+                const v = await this.request(buildFrameMessages(frames[i], i, frames.length, verdicts));
+                verdicts.push(v);
+                if (!v.real || v.uncertain) break;
+            }
+            return aggregateFrameVerdicts(verdicts, 'session6');
+        }
+
+        async verifyWithStrategy(frames, mode) {
+            const reviewMode = normalizeReviewMode(mode);
+            if (reviewMode === 'single6') return this.verifyFramesIndependently(frames);
+            if (reviewMode === 'session6') return this.verifyFramesInSession(frames);
+            const v = await this.verify(frames);
+            v.review_mode = 'batch6';
+            return v;
+        }
     }
 
     // ============================================================
     // 导出
     // ============================================================
-    const api = { VLM_PROMPT_VERSION, VLM_PROMPT, buildMessages, parseVerdict, captureVideoFrame, VlmLiveness };
+    const api = { VLM_PROMPT_VERSION, VLM_PROMPT, buildMessages, buildFrameMessages, aggregateFrameVerdicts, normalizeReviewMode, parseVerdict, captureVideoFrame, VlmLiveness };
     if (typeof module !== 'undefined' && module.exports) module.exports = api;
     else root.TmsLiveness = api;
 

@@ -34,6 +34,49 @@ test('buildMessages: 0 帧也合法（只有提示词）', () => {
     assert.strictEqual(msgs[0].content.length, 1);
 });
 
+test('normalizeReviewMode: 只允许三种核验方式', () => {
+    assert.strictEqual(L.normalizeReviewMode('batch6'), 'batch6');
+    assert.strictEqual(L.normalizeReviewMode('session6'), 'session6');
+    assert.strictEqual(L.normalizeReviewMode('single6'), 'single6');
+    assert.strictEqual(L.normalizeReviewMode('bad'), 'batch6');
+    assert.strictEqual(L.normalizeReviewMode(null), 'batch6');
+});
+
+test('buildFrameMessages: 单帧消息带 frame 序号和历史摘要', () => {
+    const msgs = L.buildFrameMessages('data:image/jpeg;base64,AAA', 1, 6, [
+        { real: true, confidence: 0.91, attack_type: 'none', uncertain: false, spoof_cues: [] }
+    ]);
+    assert.strictEqual(msgs.length, 1);
+    assert.strictEqual(msgs[0].content.length, 2);
+    assert.match(msgs[0].content[0].text, /frame 2 of 6/i);
+    assert.match(msgs[0].content[0].text, /frame 1: real=true/i);
+    assert.strictEqual(msgs[0].content[1].image_url.url, 'data:image/jpeg;base64,AAA');
+});
+
+test('aggregateFrameVerdicts: 任一帧 spoof/uncertain 即整体 false', () => {
+    const v = L.aggregateFrameVerdicts([
+        { real: true, confidence: 0.95, attack_type: 'none', spoof_cues: [], uncertain: false, reason: 'ok' },
+        { real: false, confidence: 0.2, attack_type: 'phone_screen', spoof_cues: ['bezel'], uncertain: false, reason: 'phone edge' },
+        { real: true, confidence: 0.9, attack_type: 'none', spoof_cues: [], uncertain: false, reason: 'ok' }
+    ], 'single6');
+    assert.strictEqual(v.real, false);
+    assert.strictEqual(v.attack_type, 'phone_screen');
+    assert.deepStrictEqual(v.spoof_cues, ['bezel']);
+    assert.strictEqual(v.review_mode, 'single6');
+    assert.match(v.reason, /frame 2\/3/);
+});
+
+test('aggregateFrameVerdicts: 全部通过则取最低 confidence', () => {
+    const v = L.aggregateFrameVerdicts([
+        { real: true, confidence: 0.95, attack_type: 'none', spoof_cues: [], uncertain: false, reason: 'ok' },
+        { real: true, confidence: 0.76, attack_type: 'none', spoof_cues: [], uncertain: false, reason: 'ok' }
+    ], 'session6');
+    assert.strictEqual(v.real, true);
+    assert.strictEqual(v.confidence, 0.76);
+    assert.strictEqual(v.attack_type, 'none');
+    assert.strictEqual(v.review_mode, 'session6');
+});
+
 test('parseVerdict: 纯 JSON', () => {
     const v = L.parseVerdict('{"real": true, "confidence": 0.92, "reason": "live human"}');
     assert.strictEqual(v.real, true);
