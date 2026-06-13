@@ -1314,64 +1314,106 @@
     // ============================================================
     // 考勤记录
     // ============================================================
-    async function renderRecords() {
-        const recs = await tmsDB.getAllAttendance();
-        el.recordsBody.innerHTML = '';
-        el.recordsEmpty.style.display = recs.length ? 'none' : 'block';
+    let recordsTable = null;
 
-        recs.forEach(r => {
-            const tr = document.createElement('tr');
-            const t = new Date(r.timestamp);
-            const cells = [
-                r.employeeName,
-                r.type === 'in' ? I18N.t('type_in') : I18N.t('type_out'),
-                t.toLocaleDateString(),
-                t.toLocaleTimeString()
-            ];
-            cells.forEach((txt, i) => {
-                const td = document.createElement('td');
-                if (i === 1) {
-                    // 类型列：状态圆点（颜色随 cell-in/cell-out 的 currentColor）+ 文本
+    function ensureRecordsTable() {
+        if (recordsTable) return recordsTable;
+        recordsTable = new TmsTabular.Table({
+            tbody: el.recordsBody,
+            empty: el.recordsEmpty,
+            filterInput: el.recordsFilter,
+            pageSizeSelect: el.recordsPageSize,
+            prevBtn: el.recordsPrevBtn,
+            nextBtn: el.recordsNextBtn,
+            pageInfo: el.recordsPageInfo,
+            sortButtons: document.querySelectorAll('[data-record-sort]'),
+            sortKey: 'timestamp',
+            sortDir: 'desc',
+            pageInfoText: ({ start, end, total, page, pages }) => I18N.t('records_page_info', { start, end, total, page, pages }),
+            columns: recordColumns()
+        });
+        return recordsTable;
+    }
+
+    function recordColumns() {
+        return [
+            {
+                key: 'employeeName',
+                value: r => r.employeeName || '',
+                filterValue: r => `${r.employeeName || ''} ${r.employeeId || ''}`
+            },
+            {
+                key: 'type',
+                value: r => r.type === 'in' ? I18N.t('type_in') : I18N.t('type_out'),
+                sortValue: r => r.type,
+                render: (r, td) => {
                     td.className = r.type === 'in' ? 'cell-in' : 'cell-out';
                     td.innerHTML = icon('dot') + ' ';
                     const span = document.createElement('span');
-                    span.textContent = txt;
+                    span.textContent = r.type === 'in' ? I18N.t('type_in') : I18N.t('type_out');
                     td.appendChild(span);
-                } else {
-                    td.textContent = txt;
                 }
-                tr.appendChild(td);
-            });
-            // 状态徽章
-            const stTd = document.createElement('td');
-            const st = r.status || 'ontime';
-            if (st !== 'ontime') {
-                const badge = document.createElement('span');
-                badge.className = 'status-badge ' + st;
-                badge.textContent = I18N.t('status_' + st);
-                stTd.appendChild(badge);
-            } else {
-                stTd.textContent = I18N.t('status_ontime');
-                stTd.className = 'cell-muted';
+            },
+            {
+                key: 'date',
+                value: r => new Date(r.timestamp).toLocaleDateString(),
+                sortValue: r => r.timestamp
+            },
+            {
+                key: 'time',
+                value: r => new Date(r.timestamp).toLocaleTimeString(),
+                sortValue: r => r.timestamp
+            },
+            {
+                key: 'status',
+                value: r => I18N.t('status_' + (r.status || 'ontime')),
+                sortValue: r => r.status || 'ontime',
+                render: (r, td) => {
+                    const st = r.status || 'ontime';
+                    if (st !== 'ontime') {
+                        const badge = document.createElement('span');
+                        badge.className = 'status-badge ' + st;
+                        badge.textContent = I18N.t('status_' + st);
+                        td.appendChild(badge);
+                    } else {
+                        td.textContent = I18N.t('status_ontime');
+                        td.className = 'cell-muted';
+                    }
+                }
+            },
+            {
+                key: 'verifyStatus',
+                value: r => verifyText(r.verifyStatus || 'none'),
+                sortValue: r => r.verifyStatus || 'none',
+                render: (r, td) => {
+                    const vs = r.verifyStatus || 'none';
+                    td.className = 'verify-cell verify-' + vs;
+                    td.innerHTML = verifyBadge(vs);
+                    if (vs === 'suspect' || vs === 'reviewed') {
+                        td.setAttribute('role', 'button');
+                        td.title = I18N.t('review_title');
+                        td.onclick = () => openReview(r);
+                    }
+                }
             }
-            tr.appendChild(stTd);
+        ];
+    }
 
-            // 核验列：图标 + 文字；suspect/reviewed 可点开复核弹窗
-            const vTd = document.createElement('td');
-            const vs = r.verifyStatus || 'none';
-            vTd.className = 'verify-cell verify-' + vs;
-            vTd.innerHTML = verifyBadge(vs);
-            if (vs === 'suspect' || vs === 'reviewed') {
-                vTd.setAttribute('role', 'button');
-                vTd.title = I18N.t('review_title');
-                vTd.onclick = () => openReview(r);
-            }
-            tr.appendChild(vTd);
-
-            el.recordsBody.appendChild(tr);
-        });
-
+    async function renderRecords() {
+        const recs = await tmsDB.getAllAttendance();
+        ensureRecordsTable().setData(recs);
         el.recordsSummary.textContent = summarizeHours(recs);
+    }
+
+    function verifyText(vs) {
+        const key = {
+            pending: 'verify_pending',
+            real: 'verify_real',
+            suspect: 'verify_suspect',
+            reviewed: 'verify_reviewed',
+            error: 'verify_error'
+        }[vs];
+        return key ? I18N.t(key) : I18N.t('dash');
     }
 
     // 核验状态 → 图标 + 文案
