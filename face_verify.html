@@ -797,6 +797,12 @@
                     updateUserList(faceMatcher.getRegisteredUsers());
                     setStatus(`Loaded ${result.count} users from JSON`, 'success');
                     startVerifyBtn.disabled = !faceApiReady;
+                    if (typeof PerfOverlay !== 'undefined') {
+                        PerfOverlay.setInfo({
+                            users: faceMatcher.getUserCount(),
+                            clusters: faceMatcher.descriptors.length
+                        });
+                    }
                 } else {
                     setStatus('Failed to parse JSON: ' + result.error, 'error');
                 }
