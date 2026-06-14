@@ -4,7 +4,8 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>FaceAPI Warmup Demo</title>
+    <title>FaceAPI Warm-up Demo</title>
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
     <style>
         :root {
             --primary-green: #00d084;
@@ -36,14 +37,17 @@
             margin: 0;
         }
 
-        h2 {
+        h1 {
             margin: 0;
-            font-size: 1.5rem;
-            font-weight: 600;
+            font-size: 1.4rem;
+            font-weight: 700;
+            letter-spacing: -0.01em;
             background: linear-gradient(135deg, var(--primary-green), #00f5a0);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             background-clip: text;
+            display: flex;
+            align-items: center;
         }
 
         #controls {
@@ -249,25 +253,56 @@
         }
     </style>
 
-    <!-- 1. 先加载 TensorFlow.js -->
-    <!-- 1. 先加载 TensorFlow.js -->
-    <script src="./js/lib/tf.min.js"></script>
-    <!-- 2. 加载 WASM Backend -->
-    <script src="./js/lib/tf-backend-wasm.js"></script>
-    <!-- 3. 加载 FaceAPI (nobundle 版本，不含 TFJS) -->
-    <script src="./js/lib/face-api.esm-nobundle.js" type="module"></script>
-    <!-- 4. 如果需要兼容非 module，用 IIFE bundle -->
+    <!-- face-api.js bundles TF.js + WASM backend — single source of truth -->
     <script src="./js/lib/face-api.js"></script>
 </head>
 
 <body>
-    <h2>🎭 FaceAPI + Hidden Warm-up Demo</h2>
+
+<!-- SVG sprite — all icons defined here, referenced via <use href="#id"> -->
+<svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
+  <symbol id="i-face-scan" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <!-- Detection corners -->
+    <path d="M3 7V4h3M21 7V4h-3M3 17v3h3M21 17v3h-3"/>
+    <!-- Face -->
+    <circle cx="12" cy="12" r="4.5"/>
+    <circle cx="10.5" cy="11" r=".6" fill="currentColor" stroke="none"/>
+    <circle cx="13.5" cy="11" r=".6" fill="currentColor" stroke="none"/>
+    <path d="M10 13.5 Q12 15.5 14 13.5"/>
+  </symbol>
+  <symbol id="i-play" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <polygon points="5,3 19,12 5,21" fill="currentColor" stroke="none"/>
+  </symbol>
+  <symbol id="i-stop" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="5" y="5" width="14" height="14" rx="2" fill="currentColor" stroke="none"/>
+  </symbol>
+  <symbol id="i-arrow-left" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M19 12H5M5 12l6-6M5 12l6 6"/>
+  </symbol>
+  <symbol id="i-alert-triangle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+    <line x1="12" y1="9" x2="12" y2="13"/>
+    <line x1="12" y1="17" x2="12.01" y2="17"/>
+  </symbol>
+  <symbol id="i-camera" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+    <circle cx="12" cy="13" r="4"/>
+  </symbol>
+</svg>
+
+    <h1>
+      <svg width="24" height="24" aria-hidden="true" style="vertical-align:middle;margin-right:8px;color:var(--primary-green)"><use href="#i-face-scan"/></svg>
+      FaceAPI Warm-up Demo
+    </h1>
 
     <div id="controls">
-        <button id="startBtn" disabled>▶ Start Camera</button>
+        <button id="startBtn" disabled aria-label="Start camera">
+          <svg width="14" height="14" aria-hidden="true" style="vertical-align:middle;margin-right:6px"><use href="#i-play"/></svg>
+          Start Camera
+        </button>
         <div id="statusWrapper">
             <div id="spinner" class="spinner"></div>
-            <span id="status">Loading…</span>
+            <span id="status" aria-live="polite">Loading…</span>
         </div>
     </div>
 
@@ -285,16 +320,22 @@
     </div>
 
     <!-- Error Modal -->
-    <div id="errorModal">
+    <div id="errorModal" role="alertdialog" aria-labelledby="errorTitle" aria-modal="true">
         <div class="error-content">
-            <h3>⚠️ Camera Error</h3>
+            <h3 id="errorTitle">
+              <svg width="20" height="20" aria-hidden="true" style="vertical-align:middle;margin-right:6px;color:var(--error-red)"><use href="#i-alert-triangle"/></svg>
+              Camera Error
+            </h3>
             <p id="errorMessage">Unable to access camera.</p>
             <button id="errorCloseBtn">Close</button>
         </div>
     </div>
 
     <!-- 返回首页链接 -->
-    <a href="home.html" class="back-link">← Back to Home</a>
+    <a href="home.html" class="back-link" aria-label="Back to Home">
+      <svg width="14" height="14" aria-hidden="true"><use href="#i-arrow-left"/></svg>
+      Back to Home
+    </a>
 
     <script>
         // DOM Elements
@@ -371,13 +412,13 @@
                 const wasmPath = './js/lib/';
                 let backendUsed = 'unknown';
 
-                // 尝试使用全局 tf 对象设置 WASM 路径
-                if (typeof tf !== 'undefined' && tf.wasm && tf.wasm.setWasmPaths) {
-                    tf.wasm.setWasmPaths(wasmPath);
-                    await tf.setBackend('wasm');
-                    await tf.ready();
+                // 统一使用 faceapi.tf（face-api.js 内置的 TF 实例）
+                if (faceapi.tf.wasm && faceapi.tf.wasm.setWasmPaths) {
+                    faceapi.tf.wasm.setWasmPaths(wasmPath);
+                    await faceapi.tf.setBackend('wasm');
+                    await faceapi.tf.ready();
                     backendUsed = 'wasm';
-                    console.log('✅ WASM backend ready:', tf.getBackend());
+                    console.log('✅ WASM backend ready:', faceapi.tf.getBackend());
                 } else {
                     // Fallback 到 WebGL
                     console.warn('⚠️ WASM not available, falling back to WebGL');

@@ -64,6 +64,8 @@
 
     // 打卡防抖：记录每个员工最近一次成功打卡时间，冷却期内忽略
     const cooldown = new Map();
+    // 手动打卡上下文：当前识别到的员工 + 已抓拍帧，供「立即打卡」按钮使用
+    let pendingManualCtx = null;
     const weakMatchWarnedAt = new Map();   // employeeId -> 上次弱匹配告警时间（限流，避免逐帧刷屏）
     let lastClockKey = null;          // 当前 clock 面板展示的员工，避免重复渲染
 
@@ -104,7 +106,8 @@
     function cacheDom() {
         [
             'bootOverlay', 'bootStatus', 'toast', 'updateBanner', 'reloadBtn',
-            'clockVideo', 'clockOverlay', 'clockCard', 'clockHint', 'empCountPill', 'langBtn', 'themeBtn',
+            'clockVideo', 'clockOverlay', 'clockCard', 'clockHint', 'clockRefreshBtn', 'clockManualBtn', 'clockManualLabel', 'clockBtnRow',
+            'empCountPill', 'langBtn', 'themeBtn',
             'empList', 'empName', 'empDept', 'enrollBtn', 'empEmpty',
             'enrollModal', 'enrollVideo', 'enrollOverlay', 'enrollBar', 'enrollText',
             'enrollThumbs', 'enrollCancel', 'enrollTitle',
@@ -1004,6 +1007,7 @@
                 continue;
             }
             d.framingKey = '';
+            d.lastBox = box;   // 供手动打卡按钮使用
 
             if (d.phase !== 'done' && d.phase !== 'verifying') d.phase = 'capturing';
 
@@ -1126,6 +1130,23 @@
         }
         el.clockCard.className = 'clock-card show';
         el.clockHint.textContent = '';
+
+        // 手动打卡按钮：识别到员工且尚未完成时显示（冷却/done 态隐藏）
+        if (el.clockManualBtn && el.clockManualLabel && hs && hs.action && phase !== 'done') {
+            pendingManualCtx = {
+                emp,
+                action: hs.action,
+                frames: Array.isArray(hs.captureFrames) ? hs.captureFrames.map(f => f.url).filter(Boolean) : [],
+                box: hs.lastBox || null,
+                geometry: hs.geometryResult || null
+            };
+            el.clockManualBtn.className = 'clock-manual-btn ' + (hs.action === 'in' ? 'in' : 'out');
+            el.clockManualLabel.textContent = I18N.t(hs.action === 'in' ? 'clock_manual_in' : 'clock_manual_out');
+            el.clockManualBtn.style.display = '';
+        } else if (el.clockManualBtn) {
+            el.clockManualBtn.style.display = 'none';
+            pendingManualCtx = null;
+        }
     }
 
     function buildAvatar(initial, cls, photo, baseClass = 'clock-avatar') {
@@ -1293,12 +1314,16 @@
         el.clockCard.className = 'clock-card';
         el.clockHint.textContent = matcher && matcher.getUserCount() > 0
             ? I18N.t('clock_face_camera') : I18N.t('clock_no_employees');
+        if (el.clockManualBtn) { el.clockManualBtn.style.display = 'none'; }
+        pendingManualCtx = null;
     }
     function showClockNoMatch() {
         if (lastClockKey === '__nomatch__') return;
         lastClockKey = '__nomatch__';
         el.clockCard.className = 'clock-card';
         el.clockHint.textContent = I18N.t('clock_no_match');
+        if (el.clockManualBtn) { el.clockManualBtn.style.display = 'none'; }
+        pendingManualCtx = null;
     }
 
     // ============================================================
@@ -2498,6 +2523,37 @@
         }
 
         el.empName.addEventListener('keydown', (e) => { if (e.key === 'Enter') openEnroll(); });
+
+        // 刷新摄像头：清空冷却 + 重置追踪器 + 重启流（等同于重进打卡页，但不清数据库）
+        if (el.clockRefreshBtn) {
+            el.clockRefreshBtn.addEventListener('click', async () => {
+                if (appMode !== 'clock') return;
+                cooldown.clear();
+                stopCamera();
+                lastClockKey = null;
+                pendingManualCtx = null;
+                showClockIdle();
+                try {
+                    await startCamera(el.clockVideo);
+                    el.clockOverlay.width = el.clockVideo.videoWidth;
+                    el.clockOverlay.height = el.clockVideo.videoHeight;
+                    startLoop(el.clockOverlay);
+                } catch (e) {
+                    toast(I18N.t('camera_error', { msg: e.message }), 'err');
+                }
+            });
+        }
+
+        // 手动打卡：使用当前已识别的员工 + 已抓帧，跳过 hold 等待
+        if (el.clockManualBtn) {
+            el.clockManualBtn.addEventListener('click', async () => {
+                if (!pendingManualCtx) return;
+                const ctx = pendingManualCtx;
+                pendingManualCtx = null;
+                el.clockManualBtn.style.display = 'none';
+                await doClock(ctx.emp, ctx.action, ctx.box, ctx.frames, ctx.geometry);
+            });
+        }
 
         // 页面隐藏时释放摄像头（移动端切后台）
         document.addEventListener('visibilitychange', () => {
