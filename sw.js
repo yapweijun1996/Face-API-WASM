@@ -18,7 +18,7 @@
  * clients.claim() takes control. Pages are reloaded by the browser on next nav.
  */
 
-const VERSION = 'faceapi-v1';
+const VERSION = 'faceapi-v2';
 const APP_CACHE = `app-${VERSION}`;
 const STATIC_CACHE = `static-${VERSION}`;
 
@@ -34,6 +34,10 @@ const APP_SHELL = [
     './settings.html',
     './manifest.webmanifest',
     './favicon.svg',
+    './icons/icon-192.png',
+    './icons/icon-512.png',
+    './icons/icon-192-maskable.png',
+    './icons/icon-512-maskable.png',
     './js/icons.js',
     './js/core/DeviceProfile.js',
     './js/core/PerfOverlay.js',
