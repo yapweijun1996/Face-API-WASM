@@ -471,50 +471,8 @@
 <body>
 
 <!-- SVG sprite — all icons defined once, referenced via <use href="#id"> -->
-<svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
-  <symbol id="i-face-register" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M3 7V4h3M21 7V4h-3M3 17v3h3M21 17v3h-3"/>
-    <circle cx="12" cy="12" r="4.5"/>
-    <circle cx="10.5" cy="11" r=".6" fill="currentColor" stroke="none"/>
-    <circle cx="13.5" cy="11" r=".6" fill="currentColor" stroke="none"/>
-    <path d="M10 13.5 Q12 15.5 14 13.5"/>
-    <path d="M17 5l2 2-2 2" stroke-width="1.5"/>
-  </symbol>
-  <symbol id="i-video" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-    <polygon points="23 7 16 12 23 17 23 7"/>
-    <rect x="1" y="5" width="15" height="14" rx="2"/>
-  </symbol>
-  <symbol id="i-x-circle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-    <circle cx="12" cy="12" r="10"/>
-    <line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/>
-  </symbol>
-  <symbol id="i-refresh-cw" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-    <polyline points="23 4 23 10 17 10"/>
-    <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
-  </symbol>
-  <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-    <polyline points="20 6 9 17 4 12"/>
-  </symbol>
-  <symbol id="i-check-circle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
-    <polyline points="22 4 12 14.01 9 11.01"/>
-  </symbol>
-  <symbol id="i-download" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-    <polyline points="7 10 12 15 17 10"/>
-    <line x1="12" y1="15" x2="12" y2="3"/>
-  </symbol>
-  <symbol id="i-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
-    <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
-  </symbol>
-  <symbol id="i-alert-triangle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
-    <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
-  </symbol>
-  <symbol id="i-arrow-left" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-    <line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/>
-  </symbol>
-</svg>
+<!-- Shared SVG icon sprite (single source of truth — see js/icons.js) -->
+<script src="./js/icons.js"></script>
 
     <h1>
       <svg width="22" height="22" aria-hidden="true" style="flex-shrink:0;color:var(--primary-green)"><use href="#i-face-register"/></svg>
@@ -539,7 +497,7 @@
             <input type="text" id="userNameInput" placeholder="Enter your name" value="Test User">
         </div>
         <button id="startRegBtn" class="btn-primary" disabled aria-label="Start face registration">
-            <svg width="14" height="14" aria-hidden="true"><use href="#i-video"/></svg>
+            <svg width="14" height="14" aria-hidden="true"><use href="#i-video-cam"/></svg>
             Start Registration
         </button>
         <div id="statusWrapper">
