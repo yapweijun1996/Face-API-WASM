@@ -60,3 +60,19 @@
     document.addEventListener('DOMContentLoaded', inject);
   }
 })();
+
+// ── PWA service worker registration ──────────────────────────────────────────
+// icons.js is the one script every root demo page loads, so it doubles as the
+// shared client bootstrap. Registering "./sw.js" here (scope "/") makes the demo
+// installable and offline-capable. Guarded so file:// and unsupported browsers
+// no-op silently. The TMS sub-app registers its own SW (narrower scope) and is
+// excluded by sw.js's fetch handler, so the two do not conflict.
+(function () {
+  if (!('serviceWorker' in navigator)) return;
+  if (location.protocol !== 'http:' && location.protocol !== 'https:') return;
+  window.addEventListener('load', function () {
+    navigator.serviceWorker.register('./sw.js').catch(function (err) {
+      console.warn('SW registration failed:', err);
+    });
+  });
+})();

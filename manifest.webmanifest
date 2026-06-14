@@ -1,0 +1,19 @@
+{
+  "name": "Face Recognition System",
+  "short_name": "FaceAPI",
+  "description": "WASM-powered face detection & verification demos — register, verify, and run live face recognition fully in the browser.",
+  "start_url": "./home.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0a0a0a",
+  "theme_color": "#00d084",
+  "icons": [
+    {
+      "src": "./favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
